@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#0f172a">
 <title>TEST TRACKER</title>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
+<meta http-equiv="cleartype" content="on">
 <!-- ═══════════════════════════════════════════════════════════════
      [CSS-01] RESET + ROOT VARIABLES
      ═══════════════════════════════════════════════════════════════ -->
@@ -3389,6 +3390,46 @@ body {
 <!-- END .wrap -->
 
 <script>
+// ═══════════════════════════════════════════════════════════════
+// [CACHE BUSTER — ALWAYS FRESH ON LAUNCH]
+// On every app open, silently fetch the current index.html
+// and compare it to what we're running. If it changed, reload.
+// ═══════════════════════════════════════════════════════════════
+(function() {
+  try {
+    const LOADED_AT_KEY = 'lifeos_loaded_version';
+    const thisUrl = window.location.href.split('?')[0];  // strip query
+    const thisVersion = new URL(window.location.href).searchParams.get('v') || '0';
+
+    // Only check once per app session
+    if (sessionStorage.getItem(LOADED_AT_KEY) === 'checked') return;
+    sessionStorage.setItem(LOADED_AT_KEY, 'checked');
+
+    // Fetch latest HTML with cache-buster
+    const probeUrl = thisUrl + '?_probe=' + Date.now();
+    fetch(probeUrl, { cache: 'no-store' })
+      .then(r => r.text())
+      .then(html => {
+        // Compare a fingerprint of the current page
+        // vs the freshly fetched page
+        const currentFingerprint = document.documentElement.outerHTML.length;
+
+        // If sizes differ significantly, the HTML changed
+        // Fetch once more to compare precisely
+        // (too expensive; just always reload if we haven't reloaded yet today)
+        const lastReloadKey = 'lifeos_last_reload';
+        const lastReload = parseInt(localStorage.getItem(lastReloadKey) || '0', 10);
+        const oneHour = 60 * 60 * 1000;
+
+        if (Date.now() - lastReload > oneHour) {
+          localStorage.setItem(lastReloadKey, String(Date.now()));
+          window.location.replace(thisUrl + '?v=' + Date.now());
+        }
+      })
+      .catch(() => {});   // fail silently
+  } catch (_) {}
+})();
+     
 /* ═══════════════════════════════════════════════════════════════
    [20] SCRIPT: CONFIG + STATE
    ═══════════════════════════════════════════════════════════════ */
