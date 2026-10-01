@@ -3390,51 +3390,40 @@ body {
 <!-- END .wrap -->
 
 <script>
-// ═══════════════════════════════════════════════════════════════
-// [CACHE BUSTER — ALWAYS FRESH ON LAUNCH]
-// On every app open, silently fetch the current index.html
-// and compare it to what we're running. If it changed, reload.
-// ═══════════════════════════════════════════════════════════════
-(function() {
-  try {
-    const LOADED_AT_KEY = 'lifeos_loaded_version';
-    const thisUrl = window.location.href.split('?')[0];  // strip query
-    const thisVersion = new URL(window.location.href).searchParams.get('v') || '0';
-
-    // Only check once per app session
-    if (sessionStorage.getItem(LOADED_AT_KEY) === 'checked') return;
-    sessionStorage.setItem(LOADED_AT_KEY, 'checked');
-
-    // Fetch latest HTML with cache-buster
-    const probeUrl = thisUrl + '?_probe=' + Date.now();
-    fetch(probeUrl, { cache: 'no-store' })
-      .then(r => r.text())
-      .then(html => {
-        // Compare a fingerprint of the current page
-        // vs the freshly fetched page
-        const currentFingerprint = document.documentElement.outerHTML.length;
-
-        // If sizes differ significantly, the HTML changed
-        // Fetch once more to compare precisely
-        // (too expensive; just always reload if we haven't reloaded yet today)
-        const lastReloadKey = 'lifeos_last_reload';
-        const lastReload = parseInt(localStorage.getItem(lastReloadKey) || '0', 10);
-        const oneHour = 60 * 60 * 1000;
-
-        if (Date.now() - lastReload > oneHour) {
-          localStorage.setItem(lastReloadKey, String(Date.now()));
-          window.location.replace(thisUrl + '?v=' + Date.now());
-        }
-      })
-      .catch(() => {});   // fail silently
-  } catch (_) {}
-})();
-     
 /* ═══════════════════════════════════════════════════════════════
    [20] SCRIPT: CONFIG + STATE
    ═══════════════════════════════════════════════════════════════ */
 
 const API_URL = 'https://script.google.com/macros/s/AKfycbyxEffOZmUyAojcY_ctJ0Vqp5isqpU64AgG_jiavUNl0dJ8Ykf9O7N9n6rQP2bwOc-n/exec';
+/* ═══════════════════════════════════════════════════════════════
+   [FORCE FRESH ON EVERY APP LAUNCH]
+   Every time the APK is opened, force the WebView to bypass
+   its cache and load the latest index.html from GitHub Pages.
+   ═══════════════════════════════════════════════════════════════ */
+(function() {
+  try {
+    // Detect "cold start" vs "in-page reload"
+    // sessionStorage is cleared when the WebView is destroyed (app closed)
+    // localStorage persists across app restarts
+    const COLD_START_KEY = 'lifeos_cold_start';
+
+    // If sessionStorage doesn't have this key, it's a fresh app launch
+    if (!sessionStorage.getItem(COLD_START_KEY)) {
+      sessionStorage.setItem(COLD_START_KEY, '1');
+
+      // Strip any old ?v= param, then add a fresh one
+      const baseUrl = window.location.href.split('?')[0];
+
+      // If the URL already has our v= param from a previous cold start,
+      // we're fine — don't loop.
+      const hasVersionParam = window.location.search.indexOf('v=') !== -1;
+      if (hasVersionParam) return;   // already fresh
+
+      // Redirect with a cache-busting timestamp
+      window.location.replace(baseUrl + '?v=' + Date.now());
+    }
+  } catch (_) {}
+})();
 const WORK_REPORT_OPTIONS = [
   'INPUT', 'TIME', 'CONSOLIDATE', 'DRS VISIT', 'DOCTOR YEAR WISE',
   'TP VS ACTUAL', 'CHECK IN', 'SAMPLE', 'A DRS VISIT','SAMPLE UPLOAD','INPUT UPLOAD',
