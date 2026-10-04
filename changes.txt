@@ -2,9 +2,9 @@
 FILE: index.html
 
 FIND:
-  <h1>DAILY test TRACKER</h1>
+  <h1>TEST WORKFLOW</h1>
 
 REPLACE:
-  <h1>TEST WORKFLOW</h1>
+  <h1>TEST test WORKFLOW</h1>
 
 === END CHANGE ===
