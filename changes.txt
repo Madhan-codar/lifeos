@@ -1,11 +1,10 @@
 === BEGIN CHANGES ===
-FILE: Code.js
+FILE: index.html
 
 FIND:
-  function doGet(e) {
+  <h1>DAILY test TRACKER</h1>
 
 REPLACE:
-  function doGet(e) {
-    // TEST_MARKER — remove after verifying
+  <h1>TEST WORKFLOW</h1>
 
 === END CHANGE ===
