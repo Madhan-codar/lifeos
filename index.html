@@ -5914,16 +5914,23 @@ const NotesTab = {
 
         if (which === 'status') {
           menu.innerHTML = `
-            <button class="${cur === 'done'    ? 'active' : ''}" data-set="done">✓</button>
-            <button class="${cur === 'pending' ? 'active' : ''}" data-set="pending">✕</button>
-            <button class="${cur === 'ignored' ? 'active' : ''}" data-set="ignored">⊘</button>
+            <button type="button" class="${cur === 'done'    ? 'active' : ''}" data-set="done">✓</button>
+            <button type="button" class="${cur === 'pending' ? 'active' : ''}" data-set="pending">✕</button>
+            <button type="button" class="${cur === 'ignored' ? 'active' : ''}" data-set="ignored">⊘</button>
           `;
           menu.querySelectorAll('button').forEach(b => {
-            b.onclick = (ev) => {
+            const handler = (ev) => {
+              ev.preventDefault();
               ev.stopPropagation();
               NotesTab.setStatus(s.key, id, b.dataset.set);
               menu.classList.add('hidden');
+              // Kill any focused input so the Android keypad cannot pop up
+              if (document.activeElement && document.activeElement.blur) {
+                document.activeElement.blur();
+              }
             };
+            b.addEventListener('touchend', handler, { passive: false });
+            b.onclick = handler;
           });
         } else {
           menu.innerHTML = `

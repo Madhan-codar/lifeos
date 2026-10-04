@@ -23,7 +23,7 @@ import argparse
 import subprocess
 from datetime import datetime
 
-CHANGES_FILE = "changes.txt"
+CHANGES_FILE = r"C:\Users\ADMIN\Documents\TRACKER APP\lifeos\.gitignore\changes.txt"
 BACKUP_DIR = ".backups"
 
 
