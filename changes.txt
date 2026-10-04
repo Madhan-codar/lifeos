@@ -1,0 +1,11 @@
+=== BEGIN CHANGES ===
+FILE: Code.js
+
+FIND:
+  function doGet(e) {
+
+REPLACE:
+  function doGet(e) {
+    // TEST_MARKER — remove after verifying
+
+=== END CHANGE ===

@@ -1,0 +1,3937 @@
+/**
+ * LifeOS Tracker — Full JSON API backend
+ * Frontend is a standalone HTML file that calls this via fetch().
+ *
+ * ═══════════════════════════════════════════════════════════════════
+ *  FUNCTION INDEX
+ * ═══════════════════════════════════════════════════════════════════
+ *  A. ENTRY POINTS                      [01]–[04]
+ *  B. AUTO-SAVE + LOAD                  [05]–[06]
+ *  C. DATE / TIME HELPERS               [07]–[20]
+ *  D. TASK HELPERS                      [21]–[22]
+ *  E. TRACKER                           [23]–[25]
+ *  F. FOOD                              [26]–[30]
+ *  G. NUTRITION                         [31]–[35]
+ *  H. HEALTH HABITS                     [36]–[39]
+ *  I. NOTES                             [40]–[43]
+ *  J. CALENDAR ITEMS                    [44]–[45]
+ *  K. ROUTINE → GOOGLE CALENDAR         [46]–[49]
+ *  L. HEALTH → GOOGLE CALENDAR          [50]–[53]
+ *  M. WISHES → GOOGLE CALENDAR          [54]–[58]
+ *  N. COUNTDOWNS                        [59]–[67]
+ *  O. AIMS                              [68]–[76]
+ *  P. STREAK                            [77]–[81]
+ *  Q. DAY ABANDON                       [82]–[88]
+ *  R. TIME SKIPS                        [89]–[98]
+ *  S. DASHBOARD                         [99]–[104]
+ *  T. ORCHESTRATOR                      [105]
+ *  U. SORT / MIGRATE HELPERS            [106]–[109]
+ * ═══════════════════════════════════════════════════════════════════
+ */
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION A — ENTRY POINTS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [01] */ function doGet(e) {
+  const action = (e && e.parameter && e.parameter.action) || 'test';
+  const dateParam = e && e.parameter && e.parameter.date;
+  const date = dateParam || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+
+  let result;
+  try {
+    if (action === 'test') {
+      result = { status: 'success', message: 'API is connected!' };
+    } else if (action === 'load') {
+      result = loadPayload(date);
+    } else if (action === 'food-db') {
+      result = { status: 'success', db: getFoodDatabase() };
+    } else {
+      result = { status: 'error', message: 'Unknown action: ' + action };
+    }
+  } catch (err) {
+    result = { status: 'error', message: err.toString() };
+  }
+
+  return ContentService.createTextOutput(JSON.stringify(result))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* [02] */ function doPost(e) {
+  try {
+    const payload = JSON.parse(e.postData.contents);
+    const action = payload.action;
+    const date = payload.date || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    const data = payload.data || {};
+
+    try { CacheService.getScriptCache().remove('lifeos_load_' + date); } catch (_) {}
+    try {
+      const cache = CacheService.getScriptCache();
+      ['today', 'week', 'month'].forEach(function (p) {
+        cache.remove('dash_v2_' + p + '_' + date);
+      });
+    } catch (_) {}
+
+    let res;
+    switch (action) {
+      case 'load':                res = loadPayload(date); break;
+      case 'save-tracker':        saveTrackerForDate(data.submissions || [], date); res = { status: 'success' }; break;
+      case 'save-food':           res = saveFoodLogForDate(data.entries || [], date); res.status = 'success'; break;
+      case 'save-health-habits':  res = saveMicroHabits(data, date); res.status = 'success'; break;
+      case 'save-notes':          res = saveNotes(date, data.notes || {}); res.status = 'success'; break;
+      case 'save-calendar-items': res = saveCalendarItems(data.items || []); res.status = 'success'; break;
+      case 'dashboard':           res = getDashboardData(data.period || 'today', date); break;
+      case 'autosave':            res = autoSave(date, data); break;
+      case 'countdown-load':      res = countdownLoad(); break;
+      case 'countdown-save':      res = countdownSave(data); break;
+      case 'countdown-reminders': res = countdownCreateReminders(data); break;
+      case 'countdown-delete':    res = countdownDelete(data.id); break;
+      case 'countdown-status':    res = countdownStatus(data.id, data.status); break;
+      case 'aim-load':            res = aimLoad(); break;
+      case 'work-notes-save':        res = workNotesSave(data); break;
+      case 'aim-save':
+        res = aimSave(data);
+        if (res && res.status === 'success' && data.deadline) {
+          try { countdownSyncAllReminders(); } catch (_) {}
+        }
+        break;
+      case 'aim-delete':          res = aimDelete(data.id); break;
+      case 'aim-entry-add':       res = aimEntryAdd(data); break;
+      case 'aim-entry-delete':    res = aimEntryDelete(data.id); break;
+      case 'streak-load':         res = streakLoad(); break;
+      case 'streak-toggle':       res = streakToggle(data.date, data.force); break;
+      case 'aim-entry-update':    res = aimEntryUpdate(data); break;
+      case 'abandon-day':         res = abandonDay(date, data.reason || ''); break;
+      case 'unabandon-day':       res = unabandonDay(date); break;
+      case 'streak-heatmap':      res = streakHeatmap(); break;
+      case 'time-skips-load':     res = timeSkipsLoad(); break;
+      case 'time-skips-save':     res = timeSkipSave(data); break;
+      case 'time-skips-delete':   res = timeSkipDelete(data.id); break;
+      case 'work-plan-load':         res = workPlanLoad(data.year, data.month); break;
+      case 'work-actual-save':       res = workActualSave(data); break;
+      case 'work-additional-add':    res = workAdditionalAdd(data); break;
+      case 'work-additional-update': res = workAdditionalUpdate(data); break;
+      case 'work-additional-delete': res = workAdditionalDelete(data); break;
+      default:                    res = { status: 'error', message: 'Unknown action: ' + action };
+    }
+    try { remSyncAllToCalendar(); } catch (_) {}
+    return jsonResponse(res);
+  } catch (err) {
+    Logger.log('POST error: ' + err);
+    return jsonResponse({ status: 'error', message: err.toString() });
+  }
+}
+
+/* [03] */ function doOptions(e) {
+  return ContentService.createTextOutput('').setMimeType(ContentService.MimeType.TEXT);
+}
+
+/* [04] */ function jsonResponse(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION B — AUTO-SAVE + LOAD
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [05] */ function autoSave(date, data) {
+  if (!date || !data) return { status: 'error', message: 'missing' };
+  const t = data.tab;
+  try {
+    if (t === 'routine' && data.submissions) {
+      saveTrackerForDate(data.submissions, date);
+    } else if (t === 'health' && data.health) {
+      saveMicroHabits(data.health, date);
+    } else if (t === 'food' && data.entries) {
+      saveFoodLogForDate(data.entries, date);
+    } else if (t === 'notes' && data.notes) {
+      saveNotes(date, data.notes);
+    } else if (t === 'rem' && data.items) {
+      saveCalendarItems(data.items);
+    } else {
+      return { status: 'error', message: 'unknown tab: ' + t };
+    }
+    try { CacheService.getScriptCache().remove('lifeos_load_' + date); } catch (_) {}
+    return { status: 'success', tab: t, at: new Date().toISOString() };
+  } catch (e) {
+    return { status: 'error', message: e.toString() };
+  }
+}
+
+/* [06] */ function loadPayload(dateDMY) {
+  const cache = CacheService.getScriptCache();
+  const key = 'lifeos_load_' + dateDMY;
+  const cached = cache.get(key);
+  if (cached) return JSON.parse(cached);
+
+  const tracker = loadTrackerForDate(dateDMY);
+  const result = {
+    status: 'success',
+    date: dateDMY,
+    tasks: getTasksForDate(dateDMY),
+    submissions: tracker.submissions,
+    foodLog: getFoodLogForDate(dateDMY),
+    foodDefaults: getFoodDefaults(),
+    foodDb: getFoodDatabase(),
+    workoutBurn: computeBurnFromSubs(tracker.submissions),
+    healthHabits: getHealthHabitsForDate(dateDMY),
+    healthLog: getHealthLogForDate(dateDMY),
+    notes: getNotesForDate(dateDMY),
+    notesHistory: getNotesHistory(7),
+    calendarItems: getCalendarItems(),
+    abandoned: getAbandonReasonForDate(dateDMY).abandoned,
+    abandonReason: getAbandonReasonForDate(dateDMY).reason
+  };
+  try { cache.put(key, JSON.stringify(result), 60); } catch (_) {}
+  return result;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION C — DATE / TIME HELPERS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [07] */ function getWeekNumberForDate(date) {
+  const first = new Date(date.getFullYear(), 0, 1);
+  const past  = (date - first) / 86400000;
+  return Math.ceil((past + first.getDay() + 1) / 7);
+}
+
+/* [08] */ function parseDays(str) {
+  const map = { SUN:0,SUNDAY:0,MON:1,MONDAY:1,TUE:2,TUESDAY:2,WED:3,WEDNESDAY:3,
+                THU:4,THURSDAY:4,FRI:5,FRIDAY:5,SAT:6,SATURDAY:6 };
+  const out = [];
+  for (const p of str.split(',')) {
+    const u = p.trim().toUpperCase();
+    if (map[u] !== undefined && out.indexOf(map[u]) === -1) out.push(map[u]);
+  }
+  return out;
+}
+
+/* [09] */ function checkAlternateDay(rule, dayOfWeek, isWeekA) {
+  if (!rule) return true;
+  let days = [], weekFilter = null;
+  if (rule.indexOf('|') !== -1) {
+    const parts = rule.split('|');
+    days = parseDays(parts[0]);
+    weekFilter = parts[1];
+  } else if (rule.indexOf('Week') === 0) {
+    weekFilter = rule;
+    days = [0,1,2,3,4,5,6];
+  } else {
+    days = parseDays(rule);
+  }
+  if (weekFilter === 'WeekA' && !isWeekA) return false;
+  if (weekFilter === 'WeekB' && isWeekA)  return false;
+  if (days.length > 0 && days.indexOf(dayOfWeek) === -1) return false;
+  return true;
+}
+
+/* [10] */ function dateToISO(dateStr) {
+  return Utilities.formatDate(new Date(dateStr), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+/* [11] */ function dateToDMY(dateStr) {
+  if (typeof dateStr === 'string' && /^\d{1,2}-[A-Za-z]{3}-\d{4}$/.test(dateStr.trim())) {
+    return dateStr.trim();
+  }
+  return Utilities.formatDate(new Date(dateStr), Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+}
+
+/* [12] */ function parseDMY(dmy) {
+  if (dmy === null || dmy === undefined || dmy === '') return null;
+
+  if (typeof dmy === 'object' && typeof dmy.getTime === 'function') {
+    try { return [dmy.getFullYear(), dmy.getMonth(), dmy.getDate()]; } catch (_) {}
+  }
+
+  const s = String(dmy).trim();
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    const dt = new Date(s);
+    if (isNaN(dt.getTime())) return null;
+    return [dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()];
+  }
+
+  if (/^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}/.test(s)) {
+    const dt = new Date(s);
+    if (isNaN(dt.getTime())) return null;
+    return [dt.getFullYear(), dt.getMonth(), dt.getDate()];
+  }
+
+  const months = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
+  const parts = s.split('-');
+  if (parts.length !== 3) return null;
+  const d = parseInt(parts[0], 10);
+  const m = months[parts[1]];
+  const y = parseInt(parts[2], 10);
+  if (isNaN(y) || m === undefined || isNaN(d)) return null;
+  return [y, m, d];
+}
+
+/* [13] */ function parseCountdownDMY(dmy) {
+  if (dmy === null || dmy === undefined || dmy === '') return null;
+
+  if (typeof dmy === 'object' && typeof dmy.getTime === 'function') {
+    try { return { y: dmy.getFullYear(), m0: dmy.getMonth(), d: dmy.getDate() }; } catch (_) {}
+  }
+
+  const s = String(dmy).trim();
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    const dt = new Date(s);
+    if (isNaN(dt.getTime())) return null;
+    return { y: dt.getUTCFullYear(), m0: dt.getUTCMonth(), d: dt.getUTCDate() };
+  }
+
+  if (/^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}/.test(s)) {
+    const dt = new Date(s);
+    if (isNaN(dt.getTime())) return null;
+    return { y: dt.getFullYear(), m0: dt.getMonth(), d: dt.getDate() };
+  }
+
+  const months = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
+  const parts = s.split('-');
+  if (parts.length !== 3) return null;
+  const d = parseInt(parts[0], 10);
+  const m0 = months[parts[1]];
+  const y = parseInt(parts[2], 10);
+  if (isNaN(d) || m0 === undefined || isNaN(y)) return null;
+  return { y: y, m0: m0, d: d };
+}
+
+/* [14] */ function normalizeDateForOutput(val) {
+  if (val === null || val === undefined || val === '') return '';
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  if (typeof val === 'object' && typeof val.getTime === 'function') {
+    try {
+      const d = String(val.getDate()).padStart(2,'0');
+      const m = MONTHS[val.getMonth()];
+      const y = val.getFullYear();
+      if (y && m !== undefined && d !== 'NaN') return d + '-' + m + '-' + y;
+    } catch (_) {}
+  }
+
+  const s = String(val).trim();
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    const dt = new Date(s);
+    if (!isNaN(dt.getTime())) {
+      const d = String(dt.getUTCDate()).padStart(2,'0');
+      const m = MONTHS[dt.getUTCMonth()];
+      const y = dt.getUTCFullYear();
+      return d + '-' + m + '-' + y;
+    }
+  }
+
+  if (/^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}/.test(s)) {
+    const dt = new Date(s);
+    if (!isNaN(dt.getTime())) {
+      const d = String(dt.getDate()).padStart(2,'0');
+      const m = MONTHS[dt.getMonth()];
+      const y = dt.getFullYear();
+      return d + '-' + m + '-' + y;
+    }
+  }
+
+  if (/^\d{1,2}-[A-Za-z]{3}-\d{4}$/.test(s)) return s;
+
+  const dt2 = new Date(s);
+  if (!isNaN(dt2.getTime())) {
+    const d = String(dt2.getDate()).padStart(2,'0');
+    const m = MONTHS[dt2.getMonth()];
+    const y = dt2.getFullYear();
+    return d + '-' + m + '-' + y;
+  }
+
+  return s;
+}
+
+/* [15] */ function parseTimeRange(range) {
+  if (!range) return null;
+  const s = String(range);
+  const sep = s.indexOf('–') !== -1 ? '–' : (s.indexOf('—') !== -1 ? '—' : '-');
+  const parts = s.split(sep).map(function (x) { return x.trim(); });
+  if (parts.length < 2) return null;
+  const a = parseClock(parts[0]);
+  const b = parseClock(parts[1]);
+  if (!a || !b) return null;
+  return { startH: a.h, startM: a.m, endH: b.h, endM: b.m };
+}
+
+/* [16] */ function parseClock(str) {
+  const m = String(str).match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)?/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const mi = parseInt(m[2] || '0', 10);
+  const ap = (m[3] || '').toUpperCase();
+  if (ap === 'PM' && h !== 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  return { h: h, m: mi };
+}
+
+/* [17] */ function parseRemTime(val) {
+  if (val === '' || val === null || val === undefined) return { h: 9, m: 0 };
+  if (typeof val === 'number') {
+    const h = Math.floor(val);
+    const m = Math.round((val - h) * 60);
+    return { h: h, m: m };
+  }
+  const s = String(val).trim();
+  const parts = s.split('.');
+  const h = parseInt(parts[0], 10) || 9;
+  const m = parseInt(parts[1] || '0', 10) || 0;
+  return { h: h, m: m };
+}
+
+/* [18] */ function parseStartMinForSkip(plannedTime) {
+  if (!plannedTime) return 0;
+  const first = String(plannedTime).split(/[–\-—]/)[0].trim();
+  const m = first.match(/(\d{1,2}):?(\d{2})?\s*(AM|PM)?/i);
+  if (!m) return 0;
+  let h = parseInt(m[1], 10);
+  const mi = parseInt(m[2] || '0', 10);
+  const ap = (m[3] || '').toUpperCase();
+  if (ap === 'PM' && h !== 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  return h * 60 + mi;
+}
+
+/* [19] */ function hhmmToMin(val) {
+  if (val === '' || val === null || val === undefined) return null;
+  if (typeof val === 'number') {
+    return Math.floor(val) * 60 + Math.round((val - Math.floor(val)) * 60);
+  }
+  const s = String(val).trim().replace(':', '.');
+  const parts = s.split('.');
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1] || '0', 10);
+  if (isNaN(h)) return null;
+  return h * 60 + (m || 0);
+}
+
+/* [20] */ function safeJsonParse(str, fallback) {
+  if (!str) return fallback;
+  try { return JSON.parse(str); } catch (_) { return fallback; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION D — TASK HELPERS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [21] */ function getTasksForDate(dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER DATA');
+  if (!sheet) return [];
+
+  const data = sheet.getDataRange().getValues();
+  const tasks = [];
+  const selectedDate = new Date(dateString);
+  const dayOfWeek    = selectedDate.getDay();
+  const weekNumber   = getWeekNumberForDate(selectedDate);
+  const isWeekA      = (weekNumber % 2 === 0);
+
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] && data[i][2]) {
+      const alternateDay = data[i][4] || '';
+      let show = true;
+      if (alternateDay) show = checkAlternateDay(alternateDay, dayOfWeek, isWeekA);
+      if (show) {
+        tasks.push({
+          id: String(data[i][2]).toLowerCase().replace(/\s+/g, '-'),
+          head: data[i][0],
+          subCategory: data[i][1],
+          area: data[i][2],
+          plannedTime: data[i][3],
+          reference: String(data[i][6] || '').trim()
+        });
+      }
+    }
+  }
+  return tasks;
+}
+
+/* [22] */ function getAllTasksEver() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER DATA');
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  const tasks = [];
+  const seen = {};
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] && data[i][2]) {
+      const area = String(data[i][2]).trim();
+      if (seen[area]) continue;
+      seen[area] = true;
+      tasks.push({
+        id: area.toLowerCase().replace(/\s+/g, '-'),
+        head: data[i][0],
+        subCategory: data[i][1],
+        area: area,
+        plannedTime: data[i][3],
+        alternateDays: data[i][4] || ''
+      });
+    }
+  }
+  return tasks;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION E — TRACKER
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [23] */ function loadTrackerForDate(dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER TRACKER');
+  const tasks = getTasksForDate(dateString);
+  if (!sheet) return { submissions: [], tasks: tasks };
+
+  const today = dateToDMY(dateString);
+  const all = sheet.getDataRange().getValues();
+  if (!all.length) return { submissions: [], tasks: tasks };
+
+  let dateCol = -1;
+  for (let col = 5; col < all[0].length; col++) {
+    let hv = all[0][col];
+    if (hv instanceof Date) hv = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(hv).trim() === today) { dateCol = col; break; }
+  }
+  if (dateCol === -1) return { submissions: [], tasks: tasks };
+
+  const subs = [];
+  for (let row = 1; row < all.length; row++) {
+    const area = all[row][2];
+    const type = all[row][3];
+    const val  = all[row][dateCol];
+    if (type === 'STATUS' && val) {
+      let plan = '', actual = '', reason = '';
+      for (let r = row + 1; r < Math.min(row + 4, all.length); r++) {
+        if (String(all[r][2]).trim() === String(area).trim()) {
+          if (all[r][3] === 'PLAN')   plan   = all[r][dateCol] || '';
+          if (all[r][3] === 'ACTUAL') actual = all[r][dateCol] || '';
+          if (all[r][3] === 'REASON') reason = all[r][dateCol] || '';
+        }
+      }
+      subs.push({
+        area: area,
+        status: String(val).trim().toUpperCase(),
+        plannedTime: plan,
+        actualTime: actual,
+        reason: reason
+      });
+    }
+  }
+  return { submissions: subs, tasks: tasks };
+}
+
+/* [24] */ function saveTrackerForDate(submissions, dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  let sheet = ss.getSheetByName('MASTER TRACKER');
+
+  if (!sheet) {
+    sheet = ss.insertSheet('MASTER TRACKER');
+    sheet.getRange(1,1,1,5).setValues([['Head','Sub Category','Area','Type','Alternate Days']]);
+    sheet.getRange(1,1,1,5).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+
+  const master = getAllTasksEver();
+  let all = sheet.getDataRange().getValues();
+  const existing = {};
+  for (let row = 1; row < all.length; row++) {
+    if (all[row][2] && all[row][3]) existing[all[row][2] + '|' + all[row][3]] = true;
+  }
+
+  let lastRow = sheet.getLastRow();
+  const newRows = [];
+  for (const t of master) {
+    ['STATUS','PLAN','ACTUAL','REASON'].forEach(function (type) {
+      const key = t.area + '|' + type;
+      if (!existing[key]) {
+        newRows.push([t.head, t.subCategory, t.area, type, t.alternateDays]);
+        existing[key] = true;
+      }
+    });
+  }
+  if (newRows.length) {
+    sheet.getRange(lastRow + 1, 1, newRows.length, 5).setValues(newRows);
+  }
+
+  all = sheet.getDataRange().getValues();
+  let todayCol = -1;
+  for (let col = 5; col < all[0].length; col++) {
+    let hv = all[0][col];
+    if (hv instanceof Date) hv = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(hv).trim() === today) { todayCol = col + 1; break; }
+  }
+  if (todayCol === -1) {
+    sheet.insertColumnAfter(5);
+    todayCol = 6;
+    sheet.getRange(1, todayCol).setValue(today);
+    sheet.getRange(1, todayCol).setNumberFormat('@');
+    sheet.getRange(1, todayCol).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, todayCol, sheet.getLastRow()-1, 1).clearContent().clearFormat();
+  }
+
+  for (const sub of submissions) {
+    for (let row = 1; row < all.length; row++) {
+      if (String(all[row][2]).trim() === String(sub.area).trim()) {
+        const type = all[row][3];
+        const cell = sheet.getRange(row + 1, todayCol);
+        if (type === 'STATUS') {
+          cell.setValue(sub.status);
+          if (sub.status === 'YES')          cell.setBackground('#4ade80').setFontColor('#0f172a').setFontWeight('bold');
+          else if (sub.status === 'NO')      cell.setBackground('#f87171').setFontColor('#0f172a').setFontWeight('bold');
+          else if (sub.status === 'PARTIAL') cell.setBackground('#fbbf24').setFontColor('#0f172a').setFontWeight('bold');
+        } else if (type === 'PLAN')   cell.setValue(sub.plannedTime || '');
+        else if (type === 'ACTUAL')   cell.setValue(sub.actualTime  || '');
+        else if (type === 'REASON')   cell.setValue(sub.reason      || '');
+      }
+    }
+  }
+
+  updateNutritionSummaryFromTracker(dateString, submissions);
+  updateTrackerSummary(todayCol);
+
+  try { sortTrackerDateColumns(); } catch (e) { Logger.log('sort failed: ' + e); }
+
+  return { success: true };
+}
+
+/* [25] */ function updateTrackerSummary(dateCol) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER TRACKER');
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  let yes = 0, no = 0, partial = 0;
+  const data = sheet.getRange(2, dateCol, lastRow - 1, 1).getValues();
+  for (let i = 0; i < data.length; i++) {
+    const v = String(data[i][0]).trim().toUpperCase();
+    if (v === 'YES') yes++;
+    else if (v === 'NO') no++;
+    else if (v === 'PARTIAL') partial++;
+  }
+  const total = yes + no + partial;
+  const rate  = total > 0 ? yes / total : 0;
+
+  let summaryRow = -1;
+  const colA = sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues();
+  for (let i = 0; i < colA.length; i++) {
+    if (String(colA[i][0]).trim() === '📊 SUMMARY') { summaryRow = i + 1; break; }
+  }
+  if (summaryRow === -1) {
+    summaryRow = sheet.getLastRow() + 2;
+    sheet.getRange(summaryRow, 1).setValue('📊 SUMMARY');
+    sheet.getRange(summaryRow + 1, 1).setValue('TOTAL YES:');
+    sheet.getRange(summaryRow + 2, 1).setValue('TOTAL NO:');
+    sheet.getRange(summaryRow + 3, 1).setValue('TOTAL PARTIAL:');
+    sheet.getRange(summaryRow + 4, 1).setValue('COMPLETION RATE:');
+  }
+  sheet.getRange(summaryRow + 1, dateCol).setValue(yes).setFontSize(16).setFontWeight('bold').setHorizontalAlignment('center').setBackground('#4ade80');
+  sheet.getRange(summaryRow + 2, dateCol).setValue(no).setFontSize(16).setFontWeight('bold').setHorizontalAlignment('center').setBackground('#f87171');
+  sheet.getRange(summaryRow + 3, dateCol).setValue(partial).setFontSize(16).setFontWeight('bold').setHorizontalAlignment('center').setBackground('#22d3ee');
+  sheet.getRange(summaryRow + 4, dateCol).setValue(rate).setNumberFormat('0%').setFontSize(16).setFontWeight('bold').setHorizontalAlignment('center').setBackground('#f8fafc');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION F — FOOD
+   ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   SECTION W — WORK PLAN VS ACTUAL (dropdown + helpers)
+   ═══════════════════════════════════════════════════════════════ */
+
+const WORK_REPORT_OPTIONS = [
+  'INPUT',
+  'TIME',
+  'CONSOLIDATE',
+  'DRS VISIT',
+  'DOCTOR YEAR WISE',
+  'TP VS ACTUAL',
+  'CHECK IN',
+  'SAMPLE',
+  'INPUT UPLOAD',
+  'SAMPLE UPLOAD',
+  'A DRS VISIT',
+  'ADD DELETE',
+  'CONSOLIDATE & ATTENDANCE',
+  'ADD DELETE & KARIMNAGARE'
+];
+
+/* Get or create the WORK PLAN VS ACTUAL sheet */
+function getWorkSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('WORK PLAN VS ACTUAL');
+  if (!sheet) {
+    sheet = ss.insertSheet('WORK PLAN VS ACTUAL');
+    sheet.appendRow(['Date','DAY','Planned Report','Planned Occurrence',
+                    'Actual Report','Actual Occurrence','ADDITIONAL REPORT','NOTES','Skip']);
+    sheet.getRange(1,1,1,8).setFontWeight('bold')
+      .setBackground('#1e293b').setFontColor('#ffffff');
+  }
+  return sheet;
+}
+/* [26] */ function getFoodDatabase() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('FOOD_CALORIES_DB');
+  if (!sheet) return {};
+  const data = sheet.getDataRange().getValues();
+  const foods = {};
+  for (let i = 1; i < data.length; i++) {
+    const mealType = data[i][0];
+    if (!mealType || mealType === '') break;
+    const name = data[i][1];
+    if (!name || name === '') continue;
+    foods[name] = {
+      mealType: String(mealType).trim(),
+      category: data[i][2] || '',
+      subCategory: data[i][3] || '',
+      calories: Number(data[i][5]) || 0,
+      protein: Number(data[i][6]) || 0,
+      defaultQty: Number(data[i][7]) || 1,
+      isDefault: String(data[i][8] || '').trim().toUpperCase() === 'YES'
+    };
+  }
+  return foods;
+}
+
+/* [27] */ function getFoodDefaults() {
+  const db = getFoodDatabase();
+  const meals = ['Breakfast','Morning Break','Lunch','Evening Snack','Dinner'];
+  const out = {};
+  meals.forEach(function (m) { out[m] = {}; });
+
+  Object.keys(db).forEach(function (name) {
+    const f = db[name];
+    if (!f.isDefault) return;
+    const mealTypes = String(f.mealType || '').split(',').map(x => x.trim());
+    let slot = null;
+    if (f.category === 'Main') slot = 'main';
+    else if (f.category === 'Gravy' && f.subCategory === 'Kolambu') slot = 'kolambu';
+    else if (f.category === 'Side' && f.subCategory === 'Side1') slot = 'side1';
+    else if (f.category === 'Side' && f.subCategory === 'Side2') slot = 'side2';
+    if (!slot) return;
+    mealTypes.forEach(function (m) {
+      if (!out[m]) return;
+      if (!out[m][slot]) {
+        out[m][slot] = { name: name, qty: f.defaultQty || 1 };
+      }
+    });
+  });
+  return out;
+}
+
+/* [28] */ function getFoodLogForDate(dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  const sheet = ss.getSheetByName('FOOD_LOG');
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  const entries = [];
+  for (let i = 1; i < data.length; i++) {
+    const c = data[i][0];
+    let cd = '';
+    if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    else {
+      const s = String(c).trim();
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+        const dt = new Date(s);
+        if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      } else cd = s;
+    }
+    if (cd === today) {
+      entries.push({
+        meal: data[i][1], slot: data[i][2], mainFood: data[i][3], mainQty: data[i][4],
+        kolambu: data[i][5], kolambuQty: data[i][6],
+        side1: data[i][7], side1Qty: data[i][8],
+        side2: data[i][9], side2Qty: data[i][10],
+        time: data[i][11], calories: Number(data[i][12]) || 0, protein: Number(data[i][13]) || 0
+      });
+    }
+  }
+  return entries;
+}
+
+/* [29] */ function saveFoodLogForDate(entries, dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  let sheet = ss.getSheetByName('FOOD_LOG');
+
+  if (!sheet) {
+    sheet = ss.insertSheet('FOOD_LOG');
+    sheet.appendRow(['Date','Meal','Slot','Main Food','Main Qty','Kolambu','Kolambu Qty','Side 1','Side 1 Qty','Side 2','Side 2 Qty','Time','Calories','Protein']);
+    sheet.getRange(1,1,1,14).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+
+  // Wipe existing rows for this date
+  const data = sheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    const c = data[i][0];
+    let cd = '';
+    if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    else {
+      const s = String(c).trim();
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+        const dt = new Date(s);
+        if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      } else cd = s;
+    }
+    if (cd === today) sheet.deleteRow(i + 1);
+  }
+
+  const rows = [];
+  let totalCal = 0;
+  for (const e of entries) {
+    if (!e.mainFood) continue;
+    rows.push([
+      today, e.meal || '', e.slot || 'main',
+      e.mainFood, e.mainQty || 1,
+      e.kolambu || '', e.kolambuQty || 1,
+      e.side1 || '', e.side1Qty || 1,
+      e.side2 || '', e.side2Qty || 1,
+      e.time || '', e.calories || 0, e.protein || 0
+    ]);
+    totalCal += Number(e.calories) || 0;
+  }
+
+  if (rows.length > 0) {
+    const start = sheet.getLastRow() + 1;
+    sheet.getRange(start, 1, rows.length, 1).setNumberFormat('@');
+    const range = sheet.getRange(start, 1, rows.length, 14);
+    range.setValues(rows);
+    sheet.getRange(start, 13, rows.length, 2).setNumberFormat('#,##0');
+  }
+
+  const workoutBurn = getWorkoutBurnForDate(dateString);
+  updateNutritionSummary(dateString, totalCal, workoutBurn);
+  try { sortSheetRowsByDateDesc('FOOD_LOG', 0); } catch (_) {}
+  return { count: rows.length, totalCalories: totalCal };
+}
+
+/* [30] */ function getFoodCaloriesForDate(dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  const sheet = ss.getSheetByName('FOOD_LOG');
+  if (!sheet) return 0;
+  const data = sheet.getDataRange().getValues();
+  let total = 0;
+  for (let i = 1; i < data.length; i++) {
+    const c = data[i][0];
+    let cd = '';
+    if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    else {
+      const s = String(c).trim();
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+        const dt = new Date(s);
+        if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      } else cd = s;
+    }
+    if (cd === today) total += Number(data[i][12]) || 0;
+  }
+  return total;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION G — NUTRITION
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [31] */ function computeBurnFromSubs(subs) {
+  if (!subs || !subs.length) return 0;
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER DATA');
+  if (!sheet) return 0;
+
+  const data = sheet.getDataRange().getValues();
+  const burnByArea = {};
+  for (let i = 1; i < data.length; i++) {
+    const area = String(data[i][2] || '').trim();
+    if (!area) continue;
+    const burn = Number(data[i][5]) || 0; // column F: "Calories Burn"
+    burnByArea[area.toLowerCase()] = burn;
+  }
+
+  let total = 0;
+  for (const sub of subs) {
+    if (sub.status !== 'YES') continue;
+    const area = String(sub.area || '').trim().toLowerCase();
+    if (burnByArea[area] !== undefined) total += burnByArea[area];
+  }
+  return Math.round(total);
+}
+
+/* [32] */ function computeWatchBurn(w) {
+  if (!w) return 0;
+  // Only steps counted for now — cycling/skipping disabled
+  // until accurate data is available.
+  return Math.round((Number(w.steps) || 0) * 0.04);
+}
+
+/* [33] */ function getWorkoutBurnForDate(dateString) {
+  const result = loadTrackerForDate(dateString);
+  return computeBurnFromSubs(result.submissions);
+}
+
+/* [34] */ function getWatchBurnForDate(dateString) {
+  const h = getHealthHabitsForDate(dateString);
+  if (!h || !h.watch) return 0;
+  return computeWatchBurn(h.watch);
+}
+
+/* [35] */ function updateNutritionSummaryFromTracker(dateString, submissions) {
+  const trackerBurn = computeBurnFromSubs(submissions);
+  const watchBurn   = getWatchBurnForDate(dateString);
+  const foodCalories = getFoodCaloriesForDate(dateString);
+  updateNutritionSummary(dateString, foodCalories, trackerBurn + watchBurn);
+}
+
+/* [36] */ function updateNutritionSummary(dateString, foodCalories, workoutBurn) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  let sheet = ss.getSheetByName('NUTRITION_SUMMARY');
+
+  const HEADER = ['Date','Target','Food Consumed','Food Deficit','Workout Burn','Total Deficit','Status','Watch Burn'];
+
+  if (!sheet) {
+    sheet = ss.insertSheet('NUTRITION_SUMMARY');
+    sheet.appendRow(HEADER);
+    sheet.getRange(1,1,1,HEADER.length).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  } else {
+    const headerRow = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 8)).getValues()[0];
+    if (String(headerRow[7] || '').trim() !== 'Watch Burn') {
+      sheet.getRange(1, 8).setValue('Watch Burn')
+        .setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+    }
+  }
+
+  const target = 2300;
+  const data = sheet.getDataRange().getValues();
+  let existingRow = -1;
+  let watchBurn = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const c = data[i][0];
+    let cd = '';
+    if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    else {
+      const s = String(c).trim();
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+        const dt = new Date(s);
+        if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      } else cd = s;
+    }
+    if (cd === today) {
+      existingRow = i + 1;
+      watchBurn = Number(data[i][7]) || 0;
+      break;
+    }
+  }
+
+  const finalFood    = Number(foodCalories) || 0;
+  const finalWorkout = Number(workoutBurn)  || 0;
+  const finalWatch   = Number(watchBurn)    || 0;
+  const foodDeficit  = target - finalFood;
+  const totalDeficit = foodDeficit + finalWorkout + finalWatch;
+
+  let status = '', color = '';
+  if (totalDeficit >= 500) { status = '🔥 ON TRACK'; color = '#4ade80'; }
+  else if (totalDeficit > 0) { status = '⚠️ NEED MORE'; color = '#fbbf24'; }
+  else { status = '❌ HIGH DEFICIT NEEDED'; color = '#f87171'; }
+
+  const rowVals = [today, target, finalFood, foodDeficit, finalWorkout, totalDeficit, status, finalWatch];
+
+  if (existingRow !== -1) {
+    sheet.getRange(existingRow, 1).setNumberFormat('@');
+    sheet.getRange(existingRow, 1, 1, 8).setValues([rowVals]);
+    sheet.getRange(existingRow, 7).setBackground(color).setFontColor('#0f172a').setFontWeight('bold');
+  } else {
+    sheet.insertRowAfter(1);
+    sheet.getRange(2, 1).setNumberFormat('@');
+    sheet.getRange(2, 1, 1, 8).setValues([rowVals]);
+    sheet.getRange(2, 7).setBackground(color).setFontColor('#0f172a').setFontWeight('bold');
+  }
+
+  try { sortSheetRowsByDateDesc('NUTRITION_SUMMARY', 0); } catch (_) {}
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION H — HEALTH HABITS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [37] */ function getHealthHabitsForDate(dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  let sheet = ss.getSheetByName('HEALTH_HABITS');
+  if (!sheet) return defaultHealthHabits();
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    const c = data[i][0];
+    let cd = '';
+    if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    else {
+      const s = String(c).trim();
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+        const dt = new Date(s);
+        if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      } else cd = s;
+    }
+    if (cd === today) {
+      return {
+        hasRow: true,
+        water: { count: Number(data[i][1])  || 0, target: Number(data[i][6])  || 12 },
+        break: { count: Number(data[i][2])  || 0, target: Number(data[i][7])  || 15 },
+        hair:  { count: Number(data[i][3])  || 0, target: Number(data[i][8])  || 2  },
+        face:  { count: Number(data[i][4])  || 0, target: Number(data[i][9])  || 2  },
+        teeth: { count: Number(data[i][5])  || 0, target: Number(data[i][10]) || 2  },
+        watch: {
+          cyclingM: Number(data[i][12]) || 0,
+          cyclingE: Number(data[i][13]) || 0,
+          skipping: Number(data[i][14]) || 0,
+          steps:    Number(data[i][15]) || 0
+        }
+      };
+    }
+  }
+  return defaultHealthHabits();
+}
+
+/* [38] */ function defaultHealthHabits() {
+  return {
+    hasRow: false,
+    water: { count:0, target:12 },
+    break: { count:0, target:15 },
+    hair:  { count:0, target:2  },
+    face:  { count:0, target:2  },
+    teeth: { count:0, target:2  },
+    watch: { cyclingM:0, cyclingE:0, skipping:0, steps:0 }
+  };
+}
+
+/* [39] */ function saveMicroHabits(data, dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  let sheet = ss.getSheetByName('HEALTH_HABITS');
+
+  const HEADER = ['Date','WaterCount','BreakCount','HairCount','FaceCount','TeethCount',
+                  'WaterTarget','BreakTarget','HairTarget','FaceTarget','TeethTarget','SavedAt',
+                  'CyclingM','CyclingE','Skipping','Steps'];
+
+  if (!sheet) {
+    sheet = ss.insertSheet('HEALTH_HABITS');
+    sheet.appendRow(HEADER);
+    sheet.getRange(1,1,1,HEADER.length).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  } else {
+    const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (headerRow.length < HEADER.length || String(headerRow[12] || '').trim() !== 'CyclingM') {
+      sheet.getRange(1, 13, 1, 4).setValues([['CyclingM','CyclingE','Skipping','Steps']]);
+      sheet.getRange(1, 13, 1, 4).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+    }
+  }
+
+  const wc = (data.water || {}).count || 0;
+  const bc = (data.break || {}).count || 0;
+  const hc = (data.hair  || {}).count || 0;
+  const fc = (data.face  || {}).count || 0;
+  const tc = (data.teeth || {}).count || 0;
+  const wt = 12, bt = 15, ht = 2, ft = 2, tt = 2;
+  const savedAt = new Date().toISOString();
+
+  const wk = (data.healthLog && data.healthLog.watch) || data.watch || {};
+  const cyclingM = Number(wk.cyclingM) || 0;
+  const cyclingE = Number(wk.cyclingE) || 0;
+  const skipping = Number(wk.skipping) || 0;
+  const steps    = Number(wk.steps)    || 0;
+
+  const all = sheet.getDataRange().getValues();
+  let row = -1;
+  for (let i = 1; i < all.length; i++) {
+    const c = all[i][0];
+    let cd = '';
+    if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    else {
+      const s = String(c).trim();
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+        const dt = new Date(s);
+        if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      } else cd = s;
+    }
+    if (cd === today) { row = i + 1; break; }
+  }
+
+  const rowVals = [today, wc, bc, hc, fc, tc, wt, bt, ht, ft, tt, savedAt,
+                   cyclingM, cyclingE, skipping, steps];
+
+  if (row !== -1) {
+    sheet.getRange(row, 1).setNumberFormat('@');
+    sheet.getRange(row, 1, 1, rowVals.length).setValues([rowVals]);
+  } else {
+    const newRow = sheet.getLastRow() + 1;
+    sheet.getRange(newRow, 1).setNumberFormat('@');
+    sheet.getRange(newRow, 1, 1, rowVals.length).setValues([rowVals]);
+  }
+
+  if (data.healthLog && typeof data.healthLog === 'object') {
+    let logSheet = ss.getSheetByName('HEALTH_LOG');
+    if (!logSheet) {
+      logSheet = ss.insertSheet('HEALTH_LOG');
+      logSheet.appendRow(['Timestamp','Date','Type','Value','Source']);
+      logSheet.getRange(1,1,1,5).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+    }
+    const ts = new Date().toISOString();
+    const rowsToAdd = [];
+    ['water','break','hair','face','teeth'].forEach(function (kind) {
+      const bucket = data.healthLog[kind] || {};
+      const times = bucket.log || [];
+      if (times.length) {
+        times.forEach(function () {
+          rowsToAdd.push([ts, today, kind.toUpperCase(), 1, 'app']);
+        });
+      } else if ((bucket.count || 0) > 0) {
+        rowsToAdd.push([ts, today, kind.toUpperCase(), bucket.count, 'app']);
+      }
+    });
+    if (rowsToAdd.length) {
+      logSheet.getRange(logSheet.getLastRow() + 1, 1, rowsToAdd.length, 5).setValues(rowsToAdd);
+    }
+  }
+
+  try {
+    const watchBurn = computeWatchBurn({ cyclingM, cyclingE, skipping, steps });
+    const foodCal   = getFoodCaloriesForDate(today);
+    const trackerBurn = getWorkoutBurnForDate(today);
+    updateNutritionSummary(today, foodCal, trackerBurn + watchBurn);
+  } catch (e) {
+    Logger.log('saveMicroHabits nutrition update failed: ' + e);
+  }
+
+  try { sortSheetRowsByDateDesc('HEALTH_HABITS', 0); } catch (_) {}
+
+  return { water: wc, break: bc, hair: hc, face: fc, teeth: tc,
+           cyclingM: cyclingM, cyclingE: cyclingE, skipping: skipping, steps: steps };
+}
+
+/* [40] */ function getHealthLogForDate(dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  const sheet = ss.getSheetByName('HEALTH_LOG');
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  const out = [];
+  for (let i = 1; i < data.length; i++) {
+    let d = data[i][1];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(d).trim() === today) {
+      out.push({
+        timestamp: data[i][0],
+        date: d,
+        type: data[i][2],
+        value: Number(data[i][3]) || 0,
+        source: data[i][4] || ''
+      });
+    }
+  }
+  return out;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION I — NOTES
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [41] */ function getNotesForDate(dateString) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  let sheet = ss.getSheetByName('EVERYDAY_NOTES');
+  if (!sheet) return { positive: [], improve: [], common: [], learned: [], office: [] };
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    let d = data[i][0];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(d).trim() === today) {
+      return {
+        positive: textToItems(data[i][1]),
+        improve:  textToItems(data[i][2]),
+        common:   textToItems(data[i][3]),
+        learned:  textToItems(data[i][4]),
+        office:   textToItems(data[i][5])   // column F — new Office column
+      };
+    }
+  }
+  return { positive: [], improve: [], common: [], learned: [], office: [] };
+}
+
+/* [42] */ function saveNotes(dateString, notes) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateString);
+  let sheet = ss.getSheetByName('EVERYDAY_NOTES');
+
+  const HEADER = ['Date','Positive','Improve','Common','Learned','Office','SavedAt'];
+
+  if (!sheet) {
+    sheet = ss.insertSheet('EVERYDAY_NOTES');
+    sheet.appendRow(HEADER);
+    sheet.getRange(1,1,1,HEADER.length).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  } else {
+    // ── Migrate: if Office column missing, insert it before SavedAt ──
+    const headerRow = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 7)).getValues()[0];
+    if (String(headerRow[5] || '').trim() !== 'Office') {
+      // Detect whether SavedAt is at column 5 (old layout) or 6 (new)
+      if (String(headerRow[5] || '').trim() === 'SavedAt') {
+        // Insert a new column before SavedAt
+        sheet.insertColumnBefore(6);
+        sheet.getRange(1, 6).setValue('Office');
+        sheet.getRange(1, 6).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+      } else {
+        // Empty column exists at 6 — just label it
+        sheet.getRange(1, 6).setValue('Office');
+        sheet.getRange(1, 6).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+      }
+    }
+  }
+
+  function toText(arr) {
+    if (!Array.isArray(arr)) return '';
+    return arr
+      .filter(function (x) { return x && x.text && String(x.text).trim() !== ''; })
+      .map(function (x) {
+        const s = (x.status === 'done')    ? '✓ ' :
+                  (x.status === 'pending') ? '✕ ' :
+                  (x.status === 'ignored') ? '⊘ ' : '';
+        return s + String(x.text).trim();
+      })
+      .join('\n');
+  }
+
+  const savedAt = new Date().toISOString();
+  const row = [
+    today,
+    toText(notes.positive),
+    toText(notes.improve),
+    toText(notes.common),
+    toText(notes.learned),
+    toText(notes.office),
+    savedAt
+  ];
+
+  const data = sheet.getDataRange().getValues();
+  let existing = -1;
+  for (let i = 1; i < data.length; i++) {
+    let d = data[i][0];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(d).trim() === today) { existing = i + 1; break; }
+  }
+  if (existing !== -1) {
+    sheet.getRange(existing, 1, 1, 7).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+  try { sortSheetRowsByDateDesc('EVERYDAY_NOTES', 0); } catch (_) {}
+  return { saved: true };
+}
+
+/* [43] */ function getNotesHistory(days) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('EVERYDAY_NOTES');
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  const out = [];
+  for (let i = data.length - 1; i >= 1 && out.length < days; i--) {
+    let d = data[i][0];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (!d) continue;
+    out.push({
+      date: String(d),
+      positive: textToItems(data[i][1]),
+      improve:  textToItems(data[i][2]),
+      common:   textToItems(data[i][3]),
+      learned:  textToItems(data[i][4]),
+      office:   textToItems(data[i][5])
+    });
+  }
+  return out;
+}
+
+/* [44] */ function textToItems(text) {
+  if (!text) return [];
+  return String(text).split('\n')
+    .map(function (line) { return line.trim(); })
+    .filter(function (line) { return line !== ''; })
+    .map(function (line, idx) {
+      let status = '';
+      let body = line;
+      if (line.indexOf('✓ ') === 0)      { status = 'done';    body = line.slice(2); }
+      else if (line.indexOf('✕ ') === 0) { status = 'pending'; body = line.slice(2); }
+      else if (line.indexOf('⊘ ') === 0) { status = 'ignored'; body = line.slice(2); }
+      return {
+        id: 'n' + Date.now() + '_' + idx,
+        text: body.trim(),
+        status: status
+      };
+    });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION J — CALENDAR ITEMS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [45] */ function getCalendarItems() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('CALENDAR_ITEMS');
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  const out = [];
+  for (let i = 1; i < data.length; i++) {
+    if (!data[i][0]) continue;
+    out.push({
+      id: data[i][0],
+      type: data[i][1],
+      date: normalizeDateForOutput(data[i][2]),
+      time: (function (v) {
+        if (v === '' || v === null || v === undefined) return '';
+        if (typeof v === 'number') {
+          const h = Math.floor(v);
+          const m = Math.round((v - h) * 60);
+          return String(h).padStart(2,'0') + '.' + String(m).padStart(2,'0');
+        }
+        return String(v);
+      })(data[i][3]),
+      month: Number(data[i][4]) || 0,
+      day: Number(data[i][5]) || 0,
+      title: data[i][6] || '',
+      notes: data[i][7] || '',
+      remindMin: Number(data[i][8]) || 15,
+      status: data[i][9] || '',
+      lastYear: Number(data[i][10]) || 0,
+      eventId: data[i][11] || ''
+    });
+  }
+  return out;
+}
+
+/* [46] */ function saveCalendarItems(items) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('CALENDAR_ITEMS');
+  if (!sheet) {
+    sheet = ss.insertSheet('CALENDAR_ITEMS');
+    sheet.appendRow(['ID','Type','Date','Time','Month','Day','Title','Notes','RemindMin','Status','LastYear','EventId','UpdatedAt']);
+    sheet.getRange(1,1,1,13).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+
+  const existingEventIds = {};
+  const preData = sheet.getDataRange().getValues();
+  for (let i = 1; i < preData.length; i++) {
+    const rid  = String(preData[i][0]  || '').trim();
+    const evid = String(preData[i][11] || '').trim();
+    if (rid && evid) existingEventIds[rid] = evid;
+  }
+
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
+  }
+
+  const updatedAt = new Date().toISOString();
+  const rows = items.map(function (it) {
+    return [
+      it.id || '',
+      it.type || 'reminder',
+      "'" + (it.date || ''),
+      it.time || '',
+      it.month || '',
+      it.day || '',
+      it.title || '',
+      it.notes || '',
+      it.remindMin || 15,
+      it.status || '',
+      it.lastYear || 0,
+      it.eventId || existingEventIds[it.id] || '',
+      updatedAt
+    ];
+  });
+  if (rows.length) {
+    sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+  }
+  try { remSyncAllToCalendar(); } catch (e) { Logger.log('remSyncAllToCalendar failed: ' + e); }
+  return { count: rows.length };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION K — ROUTINE → GOOGLE CALENDAR
+   ═══════════════════════════════════════════════════════════════ */
+
+const ROUTINE_CAL_NAME = 'LifeOS Routine';
+const ROUTINE_LEAD_MIN = 2;
+
+/* [47] */ function getOrCreateRoutineCalendar() {
+  const list = CalendarApp.getCalendarsByName(ROUTINE_CAL_NAME);
+  if (list && list.length) return list[0];
+  return CalendarApp.createCalendar(ROUTINE_CAL_NAME, {
+    summary: 'LifeOS routine tasks',
+    color: CalendarApp.Color.BLUE,
+    timeZone: Session.getScriptTimeZone()
+  });
+}
+
+/* [48] */ function syncRoutineForDate(dateString) {
+  const cal = getOrCreateRoutineCalendar();
+  const parsed = parseDMY(dateString);
+  if (!parsed) return { created:0, updated:0, deleted:0, unchanged:0 };
+
+  const y = parsed[0];
+  const m = parsed[1];
+  const d = parsed[2];
+
+  const dayStart = new Date(y, m, d, 0, 0, 0);
+  const dayEnd   = new Date(y, m, d, 23, 59, 59);
+
+  const existing = cal.getEvents(dayStart, dayEnd);
+  const byTitle = {};
+  existing.forEach(function (ev) {
+    const t = ev.getTitle();
+    if (!byTitle[t]) byTitle[t] = [];
+    byTitle[t].push(ev);
+  });
+
+  const tasks = getTasksForDate(dateString);
+  const expected = {};
+  let created = 0, updated = 0, deleted = 0, unchanged = 0;
+
+  const now = new Date();
+  const isToday = (y === now.getFullYear() && m === now.getMonth() && d === now.getDate());
+
+  tasks.forEach(function (t) {
+    const r = parseTimeRange(t.plannedTime);
+    if (!r) return;
+    expected[t.area] = true;
+
+    const sH = r.startH, sM = r.startM;
+    const eH = r.endH,   eM = r.endM;
+
+    let start = new Date(y, m, d, sH, sM, 0);
+    let end;
+    if (eH < sH || (eH === sH && eM <= sM)) {
+      end = new Date(y, m, d, 23, 59, 0);
+    } else {
+      end = new Date(y, m, d, eH, eM, 0);
+    }
+
+    // ── Skip already-ended tasks on today to prevent the recreate/delete loop
+    if (isToday && end.getTime() < now.getTime()) {
+      const stale = byTitle[t.area] || [];
+      stale.forEach(function (ev) { try { ev.deleteEvent(); deleted++; } catch (_) {} });
+      expected[t.area] = false;
+      return;
+    }
+
+    const matches = byTitle[t.area] || [];
+
+    if (matches.length === 0) {
+      try {
+        const ev = cal.createEvent(t.area, start, end, {
+          description: (t.head || '') + ' › ' + (t.subCategory || '')
+        });
+        try { ev.removeAllReminders(); } catch (_) {}
+        try { ev.addPopupReminder(ROUTINE_LEAD_MIN); } catch (_) {}
+        created++;
+      } catch (err) { Logger.log('create fail: ' + t.area + ' — ' + err); }
+      return;
+    }
+
+    const ev = matches[0];
+    const sameStart = Math.abs(ev.getStartTime().getTime() - start.getTime()) < 60000;
+    const sameEnd   = Math.abs(ev.getEndTime().getTime()   - end.getTime())   < 60000;
+
+    if (sameStart && sameEnd) {
+      unchanged++;
+    } else {
+      try {
+        ev.setTime(start, end);
+        try { ev.removeAllReminders(); } catch (_) {}
+        try { ev.addPopupReminder(ROUTINE_LEAD_MIN); } catch (_) {}
+        updated++;
+      } catch (err) { Logger.log('update fail: ' + t.area + ' — ' + err); }
+    }
+
+    for (let i = 1; i < matches.length; i++) {
+      try { matches[i].deleteEvent(); } catch (_) {}
+    }
+  });
+
+  Object.keys(byTitle).forEach(function (title) {
+    if (expected[title]) return;
+    byTitle[title].forEach(function (ev) {
+      try { ev.deleteEvent(); deleted++; } catch (_) {}
+    });
+  });
+
+  Logger.log(dateString + ' → +' + created + ' ~' + updated + ' -' + deleted + ' =' + unchanged);
+  return { created, updated, deleted, unchanged };
+}
+
+/* [49] */ function syncRoutineTwoDays() {
+  const tz = Session.getScriptTimeZone();
+  const totals = { created: 0, updated: 0, deleted: 0, unchanged: 0 };
+
+  for (let offset = 0; offset <= 1; offset++) {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    const dm = Utilities.formatDate(d, tz, 'dd-MMM-yyyy');
+    try {
+      const r = syncRoutineForDate(dm);
+      totals.created   += r.created;
+      totals.updated   += r.updated;
+      totals.deleted   += r.deleted;
+      totals.unchanged += r.unchanged;
+    } catch (e) {
+      Logger.log('sync error for ' + dm + ': ' + e);
+    }
+  }
+
+  Logger.log('Two-day sync: ' + JSON.stringify(totals));
+  return totals;
+}
+
+/* [50] */ function cleanPastRoutineEvents() {
+  const cal = getOrCreateRoutineCalendar();
+  const now = new Date();
+
+  const from = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+  from.setHours(0, 0, 0, 0);
+
+  const candidates = cal.getEvents(from, now);
+
+  let deleted = 0;
+  candidates.forEach(function (ev) {
+    const end = ev.getEndTime();
+    if (end && end.getTime() < now.getTime()) {
+      try { ev.deleteEvent(); deleted++; } catch (_) {}
+    }
+  });
+
+  Logger.log('routine cleanup: candidates=' + candidates.length + ' deleted=' + deleted);
+  return deleted;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION L — HEALTH → GOOGLE CALENDAR (RECURRING)
+   ═══════════════════════════════════════════════════════════════ */
+
+const HEALTH_CAL_NAME = 'LifeOS Health';
+
+const HEALTH_SCHEDULE = {
+  water: {
+    title: '💧 Drink Water (100 ml)',
+    startHour: 9, endHour: 18, everyMin: 20, durationMin: 5, leadMin: 2
+  },
+  break: {
+    title: '🌿 5-min Break',
+    startHour: 9, endHour: 18, everyMin: 60, durationMin: 5, leadMin: 2
+  }
+};
+
+/* [51] */ function getOrCreateHealthCalendar() {
+  const list = CalendarApp.getCalendarsByName(HEALTH_CAL_NAME);
+  if (list && list.length) return list[0];
+  return CalendarApp.createCalendar(HEALTH_CAL_NAME, {
+    summary: 'LifeOS health reminders (water + breaks)',
+    color: CalendarApp.Color.GREEN,
+    timeZone: Session.getScriptTimeZone()
+  });
+}
+
+/* [52] */ function syncHealthForDate(dateString) {
+  const cal = getOrCreateHealthCalendar();
+  const parsed = parseDMY(dateString);
+  if (!parsed) return { created: 0, deleted: 0, unchanged: 0 };
+
+  const y = parsed[0], m = parsed[1], d = parsed[2];
+
+  const now = new Date();
+  const isToday = (y === now.getFullYear() && m === now.getMonth() && d === now.getDate());
+
+  const dayStart = new Date(y, m, d, 0, 0, 0);
+  const dayEnd   = new Date(y, m, d, 23, 59, 59);
+  const existing = cal.getEvents(dayStart, dayEnd);
+
+  // Index existing events by title + start time
+  const byKey = {};
+  existing.forEach(function (ev) {
+    const key = ev.getTitle() + '|' + ev.getStartTime().getTime();
+    byKey[key] = ev;
+  });
+
+  let created = 0, unchanged = 0;
+  const expected = {};
+
+  const keys = Object.keys(HEALTH_SCHEDULE);
+  for (let k = 0; k < keys.length; k++) {
+    const sched = HEALTH_SCHEDULE[keys[k]];
+
+    for (let h = sched.startHour; h <= sched.endHour; h++) {
+      for (let min = 0; min < 60; min += sched.everyMin) {
+        if (h === sched.endHour && min > 0) break;
+
+        const start = new Date(y, m, d, h, min, 0);
+        const end   = new Date(start.getTime() + sched.durationMin * 60 * 1000);
+
+        // ── KEY FIX: skip past events on today ──
+        if (isToday && end.getTime() < now.getTime()) {
+          const staleKey = sched.title + '|' + start.getTime();
+          if (byKey[staleKey]) {
+            try { byKey[staleKey].deleteEvent(); } catch (_) {}
+          }
+          continue;
+        }
+
+        const dedupeKey = sched.title + '|' + start.getTime();
+        expected[dedupeKey] = true;
+
+        if (byKey[dedupeKey]) {
+          unchanged++;
+          continue;
+        }
+
+        if (created > 0) Utilities.sleep(300);
+
+        try {
+          const ev = cal.createEvent(sched.title, start, end, {
+            description: 'Auto reminder from LifeOS'
+          });
+          try { ev.removeAllReminders(); } catch (_) {}
+          try { ev.addPopupReminder(sched.leadMin); } catch (_) {}
+          created++;
+        } catch (err) {
+          Logger.log('health create fail: ' + sched.title + ' @ ' + start + ' — ' + err);
+        }
+      }
+    }
+  }
+
+  // Delete stray past events (if any remained from old runs)
+  let deleted = 0;
+  existing.forEach(function (ev) {
+    const key = ev.getTitle() + '|' + ev.getStartTime().getTime();
+    if (!expected[key]) {
+      const end = ev.getEndTime();
+      if (end && end.getTime() < now.getTime()) {
+        try { ev.deleteEvent(); deleted++; } catch (_) {}
+      }
+    }
+  });
+
+  Logger.log(dateString + ' health → +' + created + ' -' + deleted + ' =' + unchanged);
+  return { created, deleted, unchanged };
+}
+
+/* [53] */ function syncHealthTwoDays() {
+  const tz = Session.getScriptTimeZone();
+  const totals = { created: 0, deleted: 0, unchanged: 0 };
+
+  for (let offset = 0; offset <= 1; offset++) {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    const dm = Utilities.formatDate(d, tz, 'dd-MMM-yyyy');
+    try {
+      const r = syncHealthForDate(dm);
+      totals.created   += r.created;
+      totals.deleted   += r.deleted;
+      totals.unchanged += r.unchanged;
+    } catch (e) {
+      Logger.log('health sync error for ' + dm + ': ' + e);
+    }
+    if (offset === 0) Utilities.sleep(2000);
+  }
+
+  Logger.log('Health two-day sync: ' + JSON.stringify(totals));
+  return totals;
+}
+
+/* [54] */ function cleanPastHealthEvents() {
+  const cal = getOrCreateHealthCalendar();
+  const now = new Date();
+
+  const from = new Date(now.getTime() - 24 * 60 * 60 * 1000); // last 24h
+  from.setHours(0, 0, 0, 0);
+
+  const candidates = cal.getEvents(from, now);
+
+  let deleted = 0;
+  candidates.forEach(function (ev) {
+    const end = ev.getEndTime();
+    if (end && end.getTime() < now.getTime()) {
+      try { ev.deleteEvent(); deleted++; } catch (_) {}
+    }
+  });
+
+  Logger.log('health cleanup: candidates=' + candidates.length + ' deleted=' + deleted);
+  return deleted;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION M — WISHES → GOOGLE CALENDAR
+   ═══════════════════════════════════════════════════════════════ */
+
+const WISHES_CAL_NAME = 'LifeOS Wishes';
+
+/* [55] */ function getOrCreateWishesCalendar() {
+  const list = CalendarApp.getCalendarsByName(WISHES_CAL_NAME);
+  if (list && list.length) return list[0];
+  return CalendarApp.createCalendar(WISHES_CAL_NAME, {
+    summary: 'LifeOS birthdays and anniversaries',
+    color: CalendarApp.Color.PINK,
+    timeZone: Session.getScriptTimeZone()
+  });
+}
+
+/* [56] */ function createEventForReminder(it) {
+  try {
+    const isReminder = it.type === 'reminder';
+    const cal = isReminder
+      ? (CalendarApp.getCalendarsByName('LifeOS')[0] || CalendarApp.getDefaultCalendar())
+      : getOrCreateWishesCalendar();
+
+    let start, end;
+
+    if (isReminder) {
+      const normalizedDate = normalizeDateForOutput(it.date);
+      const parsed = parseDMY(normalizedDate);
+      if (!parsed) { Logger.log('bad date for reminder: ' + it.date); return null; }
+      const t = parseRemTime(it.time);
+      start = new Date(parsed[0], parsed[1], parsed[2], t.h, t.m, 0);
+      end   = new Date(start.getTime() + 30 * 60 * 1000);
+    } else {
+      const now = new Date();
+      const month = Number(it.month) - 1;
+      const day   = Number(it.day);
+      if (isNaN(month) || isNaN(day)) { Logger.log('bad wish date'); return null; }
+      start = new Date(now.getFullYear(), month, day, 0, 0, 0);
+      end   = new Date(now.getFullYear(), month, day + 1, 0, 0, 0);
+    }
+
+    const title = (it.type === 'birthday' ? '🎂 ' :
+                   it.type === 'anniversary' ? '💍 ' :
+                   '🔔 ') + (it.title || 'Untitled');
+
+    const searchStart = new Date(start.getTime() - 60 * 1000);
+    const searchEnd   = new Date(end.getTime()   + 60 * 1000);
+    let existing = null;
+    try {
+      const candidates = cal.getEvents(searchStart, searchEnd);
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
+        if (c.getTitle() !== title) continue;
+        const cStart = c.getStartTime().getTime();
+        if (Math.abs(cStart - start.getTime()) < 60 * 1000) { existing = c; break; }
+      }
+    } catch (_) {}
+
+    if (existing) {
+      try { existing.removeAllReminders(); } catch (_) {}
+      if (isReminder) {
+        try { existing.addPopupReminder(Number(it.remindMin) || 15); } catch (_) {}
+      } else {
+        try { existing.addPopupReminder(1440); } catch (_) {}
+      }
+      return existing.getId();
+    }
+
+    const ev = isReminder
+      ? cal.createEvent(title, start, end, { description: it.notes || '' })
+      : cal.createAllDayEvent(title, start, { description: it.notes || '' });
+
+    try { ev.removeAllReminders(); } catch (_) {}
+    if (isReminder) {
+      try { ev.addPopupReminder(Number(it.remindMin) || 15); } catch (_) {}
+    } else {
+      try { ev.addPopupReminder(1440); } catch (_) {}
+    }
+
+    return ev.getId();
+  } catch (e) {
+    Logger.log('createEventForReminder failed: ' + e);
+    return null;
+  }
+}
+
+/* [57] */ function deleteEventById(eventId) {
+  if (!eventId) return false;
+  const calNames = ['LifeOS', 'LifeOS Wishes', 'LifeOS Health', 'LifeOS Routine'];
+  for (let i = 0; i < calNames.length; i++) {
+    try {
+      const list = CalendarApp.getCalendarsByName(calNames[i]);
+      if (!list || !list.length) continue;
+      const ev = list[0].getEventById(eventId);
+      if (ev) { ev.deleteEvent(); return true; }
+    } catch (_) {}
+  }
+  return false;
+}
+
+/* [58] */ function updateEventForReminder(oldEventId, it) {
+  if (oldEventId) { try { deleteEventById(oldEventId); } catch (_) {} }
+  return createEventForReminder(it);
+}
+
+/* [59] */ function remSyncAllToCalendar() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('CALENDAR_ITEMS');
+  if (!sheet) return { status: 'error', message: 'no sheet' };
+
+  const data = sheet.getDataRange().getValues();
+  let created = 0, updated = 0, skipped = 0, failed = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const id = data[i][0];
+    if (!id) continue;
+    if (String(id).indexOf('cdrem_') === 0) continue;
+
+    const it = {
+      id: id,
+      type: data[i][1] || 'reminder',
+      date: normalizeDateForOutput(data[i][2]),
+      time: data[i][3],
+      month: data[i][4],
+      day: data[i][5],
+      title: data[i][6] || '',
+      notes: data[i][7] || '',
+      remindMin: data[i][8] || 15
+    };
+    const existingEventId = data[i][11] || '';
+
+    if (existingEventId) {
+      try {
+        const cals = CalendarApp.getCalendarsByName('LifeOS')
+          .concat(CalendarApp.getCalendarsByName('LifeOS Wishes'));
+        let exists = false, oldEv = null;
+        for (let c = 0; c < cals.length; c++) {
+          const ev = cals[c].getEventById(existingEventId);
+          if (ev) { exists = true; oldEv = ev; break; }
+        }
+        if (exists && oldEv) {
+          const wantTitle = (it.type === 'birthday' ? '🎂 ' :
+                             it.type === 'anniversary' ? '💍 ' : '🔔 ') + (it.title || '');
+          if (oldEv.getTitle() === wantTitle) { skipped++; continue; }
+          const newId = updateEventForReminder(existingEventId, it);
+          if (newId) { sheet.getRange(i + 1, 12).setValue(newId); updated++; }
+          continue;
+        }
+      } catch (_) {}
+    }
+
+    if (it.type === 'reminder' && it.date && it.time) {
+      if (isInSkipWindow(it.date, it.time)) {
+        if (existingEventId) {
+          try {
+            const cals = CalendarApp.getCalendarsByName('LifeOS');
+            for (let c = 0; c < cals.length; c++) {
+              const ev = cals[c].getEventById(existingEventId);
+              if (ev) { ev.deleteEvent(); break; }
+            }
+            sheet.getRange(i + 1, 12).setValue('');
+          } catch (_) {}
+        }
+        skipped++;
+        continue;
+      }
+    }
+    const newId = createEventForReminder(it);
+    if (newId) {
+      sheet.getRange(i + 1, 12).setValue(newId);
+      if (existingEventId) updated++; else created++;
+    } else failed++;
+  }
+
+  const result = { status: 'success', created, updated, skipped, failed };
+  Logger.log('remSyncAllToCalendar: ' + JSON.stringify(result));
+  return result;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION N — COUNTDOWNS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [60] */ function getCountdownsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('COUNTDOWNS');
+  if (!sheet) {
+    sheet = ss.insertSheet('COUNTDOWNS');
+    sheet.appendRow(['ID','Emoji','Title','Deadline','Notes','Status','CreatedAt','UpdatedAt']);
+    sheet.getRange(1,1,1,8).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+  return sheet;
+}
+
+/* [61] */ function countdownLoad() {
+  const sheet = getCountdownsSheet();
+  const data = sheet.getDataRange().getValues();
+  const items = [];
+  for (let i = 1; i < data.length; i++) {
+    if (!data[i][0]) continue;
+    items.push({
+      id: data[i][0],
+      emoji: data[i][1] || '🎯',
+      title: data[i][2] || '',
+      deadline: data[i][3] || '',
+      notes: data[i][4] || '',
+      status: data[i][5] || ''
+    });
+  }
+  return { status: 'success', items: items };
+}
+
+/* [62] */ function countdownSave(data) {
+  const sheet = getCountdownsSheet();
+  const now = new Date().toISOString();
+
+  if (data.id) {
+    const values = sheet.getDataRange().getValues();
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][0]) === String(data.id)) {
+        sheet.getRange(i+1, 3).setValue(data.title || '');
+        sheet.getRange(i+1, 4).setValue(data.deadline || '');
+        sheet.getRange(i+1, 5).setValue(data.notes || '');
+        sheet.getRange(i+1, 8).setValue(now);
+        try { countdownSyncAllReminders(); } catch (_) {}
+        return { status: 'success' };
+      }
+    }
+    return { status: 'error', message: 'countdown not found' };
+  }
+
+  const id = 'c' + Date.now() + Math.random().toString(36).slice(2,5);
+  sheet.appendRow([id, '', data.title || '', data.deadline || '', data.notes || '', '', now, now]);
+  try { countdownSyncAllReminders(); } catch (_) {}
+  return { status: 'success', id: id };
+}
+
+/* [63] */ function countdownDelete(id) {
+  if (!id) return { status: 'error', message: 'no id' };
+  const sheet = getCountdownsSheet();
+  const data = sheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][0]) === String(id)) { sheet.deleteRow(i+1); break; }
+  }
+  try { countdownSyncAllReminders(); } catch (_) {}
+  return { status: 'success' };
+}
+
+/* [64] */ function countdownStatus(id, status) {
+  if (!id) return { status: 'error', message: 'no id' };
+  const sheet = getCountdownsSheet();
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(id)) {
+      sheet.getRange(i+1, 6).setValue(status || '');
+      sheet.getRange(i+1, 8).setValue(new Date().toISOString());
+      return { status: 'success' };
+    }
+  }
+  return { status: 'error', message: 'not found' };
+}
+
+/* [65] */ function countdownCreateReminders(data) {
+  return countdownSyncAllReminders();
+}
+
+/* [66] */ function reminderIdFor(countdownId, slot) {
+  return 'cdrem_' + countdownId + '_' + slot;
+}
+
+/* [67] */ function reminderTitleFor(slot, countdownTitle) {
+  if (slot === 1) return '⏰ Tomorrow is deadline: ' + countdownTitle;
+  if (slot === 2) return '🔔 Deadline today: ' + countdownTitle;
+  return '🔥 Deadline today (final): ' + countdownTitle;
+}
+
+/* [68] */ function countdownSyncAllReminders() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const cdSheet = ss.getSheetByName('COUNTDOWNS');
+  if (!cdSheet) return { status: 'error', message: 'no countdowns sheet' };
+
+  const cdData = cdSheet.getDataRange().getValues();
+  const countdowns = [];
+  for (let i = 1; i < cdData.length; i++) {
+    const id = cdData[i][0];
+    if (!id) continue;
+    const title = String(cdData[i][2] || '').trim();
+    const deadline = cdData[i][3];
+    if (!title || !deadline) continue;
+    countdowns.push({ id: String(id), title: title, deadline: deadline });
+  }
+
+  let calSheet = ss.getSheetByName('CALENDAR_ITEMS');
+  if (!calSheet) {
+    calSheet = ss.insertSheet('CALENDAR_ITEMS');
+    calSheet.appendRow(['ID','Type','Date','Time','Month','Day','Title','Notes',
+                        'RemindMin','Status','LastYear','EventId','UpdatedAt']);
+    calSheet.getRange(1,1,1,13).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+
+  const calData = calSheet.getDataRange().getValues();
+  const existingRowsById = {};
+  for (let i = 1; i < calData.length; i++) {
+    const id = String(calData[i][0] || '').trim();
+    if (id) existingRowsById[id] = i + 1;
+  }
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const expected = {};
+  const toCreate = [];
+
+  countdowns.forEach(function (cd) {
+    const parsed = parseCountdownDMY(cd.deadline);
+    if (!parsed) return;
+    const y = parsed.y, m0 = parsed.m0, d = parsed.d;
+
+    const slots = [
+      { n: 1, date: new Date(y, m0, d - 1), hhmm: '21.00' },
+      { n: 2, date: new Date(y, m0, d),     hhmm: '08.00' },
+      { n: 3, date: new Date(y, m0, d),     hhmm: '09.00' }
+    ];
+
+    slots.forEach(function (sl) {
+      const dd = String(sl.date.getDate()).padStart(2,'0');
+      const mm = MONTHS[sl.date.getMonth()];
+      const yy = sl.date.getFullYear();
+      const dmy = dd + '-' + mm + '-' + yy;
+
+      const id = reminderIdFor(cd.id, sl.n);
+      const title = reminderTitleFor(sl.n, cd.title);
+
+      expected[id] = true;
+      toCreate.push({
+        id: id,
+        dmy: dmy,
+        hhmm: sl.hhmm,
+        title: title,
+        notes: 'Auto reminder · countdown: ' + cd.title,
+        when: new Date(
+          sl.date.getFullYear(),
+          sl.date.getMonth(),
+          sl.date.getDate(),
+          parseInt(sl.hhmm.split('.')[0], 10),
+          parseInt(sl.hhmm.split('.')[1], 10),
+          0
+        )
+      });
+    });
+  });
+
+  const nowIso = new Date().toISOString();
+  const newRows = [];
+  let updated = 0;
+  toCreate.forEach(function (item) {
+    const rowVals = [
+      item.id, 'reminder', "'" + item.dmy, item.hhmm,
+      '', '', item.title, item.notes,
+      15, '', 0, '', nowIso
+    ];
+    if (existingRowsById[item.id]) {
+      const sheetRow = existingRowsById[item.id];
+      calSheet.getRange(sheetRow, 3).setValue("'" + item.dmy);
+      calSheet.getRange(sheetRow, 4).setValue(item.hhmm);
+      calSheet.getRange(sheetRow, 7).setValue(item.title);
+      calSheet.getRange(sheetRow, 8).setValue(item.notes);
+      calSheet.getRange(sheetRow, 13).setValue(nowIso);
+      updated++;
+    } else {
+      newRows.push(rowVals);
+    }
+  });
+  if (newRows.length) {
+    const startRow = calSheet.getLastRow() + 1;
+    calSheet.getRange(startRow, 1, newRows.length, newRows[0].length).setValues(newRows);
+  }
+
+  let removedRows = 0;
+  const freshCalData = calSheet.getDataRange().getValues();
+  for (let i = freshCalData.length - 1; i >= 1; i--) {
+    const id = String(freshCalData[i][0] || '');
+    if (id.indexOf('cdrem_') !== 0) continue;
+    if (!expected[id]) { calSheet.deleteRow(i + 1); removedRows++; }
+  }
+
+  let cal;
+  const named = CalendarApp.getCalendarsByName('LifeOS');
+  if (named && named.length) cal = named[0];
+  else {
+    try {
+      cal = CalendarApp.createCalendar('LifeOS', {
+        summary: 'LifeOS reminders',
+        timeZone: Session.getScriptTimeZone()
+      });
+    } catch (e) {
+      cal = CalendarApp.getDefaultCalendar();
+    }
+  }
+
+  const now = new Date();
+  const horizonStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
+  const horizonEnd   = new Date(now.getFullYear(), now.getMonth() + 6, 0);
+  const existingEvents = cal.getEvents(horizonStart, horizonEnd);
+
+  const eventIndex = {};
+  existingEvents.forEach(function (ev) {
+    eventIndex[ev.getTitle() + '|' + ev.getStartTime().getTime()] = ev;
+  });
+
+  const expectedEventKeys = {};
+  let created = 0, skipped = 0, deletedEvents = 0;
+
+  toCreate.forEach(function (item) {
+    const key = item.title + '|' + item.when.getTime();
+    expectedEventKeys[key] = true;
+    if (eventIndex[key]) { skipped++; return; }
+    try {
+      const end = new Date(item.when.getTime() + 30 * 60 * 1000);
+      const ev = cal.createEvent(item.title, item.when, end);
+      try { ev.removeAllReminders(); } catch (_) {}
+      try { ev.addPopupReminder(5); } catch (_) {}
+      try { ev.setDescription(item.notes); } catch (_) {}
+      created++;
+    } catch (err) {
+      Logger.log('Event create failed: ' + item.title + ' → ' + err.message);
+    }
+  });
+
+  existingEvents.forEach(function (ev) {
+    const t = ev.getTitle();
+    const isOurs = /^(⏰ Tomorrow is deadline:|🔔 Deadline today:|🔥 Deadline today \(final\):)/.test(t);
+    if (!isOurs) return;
+    const key = t + '|' + ev.getStartTime().getTime();
+    if (!expectedEventKeys[key]) {
+      try { ev.deleteEvent(); deletedEvents++; } catch (_) {}
+    }
+  });
+
+  return {
+    status: 'success',
+    countdowns: countdowns.length,
+    remindersExpected: toCreate.length,
+    rowsAdded: newRows.length,
+    rowsUpdated: updated,
+    rowsRemoved: removedRows,
+    eventsCreated: created,
+    eventsSkipped: skipped,
+    eventsDeleted: deletedEvents,
+    calendar: cal.getName()
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION O — AIMS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [69] */ function getAimsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('AIMS');
+  if (!sheet) {
+    sheet = ss.insertSheet('AIMS');
+    sheet.appendRow(['ID','Emoji','Title','Notes','StartDate','CreatedAt']);
+    sheet.getRange(1,1,1,6).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+  return sheet;
+}
+
+/* [70] */ function getAimEntriesSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('AIM_ENTRIES');
+  if (!sheet) {
+    sheet = ss.insertSheet('AIM_ENTRIES');
+    sheet.appendRow(['ID','AimID','Date','Type','Text','CreatedAt']);
+    sheet.getRange(1,1,1,6).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+  return sheet;
+}
+
+/* [71] */ function aimLoad() {
+  const aimsSheet = getAimsSheet();
+  const entriesSheet = getAimEntriesSheet();
+  const cdSheet = getCountdownsSheet();
+
+  const cdByTitle = {};
+  try {
+    const cdData = cdSheet.getDataRange().getValues();
+    for (let i = 1; i < cdData.length; i++) {
+      if (!cdData[i][2]) continue;
+      cdByTitle[String(cdData[i][2]).trim()] = cdData[i][3];
+    }
+  } catch (_) {}
+
+  const aData = aimsSheet.getDataRange().getValues();
+  const aims = [];
+  for (let i = 1; i < aData.length; i++) {
+    if (!aData[i][0]) continue;
+    const title = aData[i][2] || '';
+    const cdDeadline = cdByTitle[String(title).trim()];
+    aims.push({
+      id: aData[i][0],
+      emoji: aData[i][1] || '🎯',
+      title: title,
+      notes: aData[i][3] || '',
+      startDate: normalizeDateForOutput(aData[i][4]),
+      deadline: cdDeadline ? normalizeDateForOutput(cdDeadline) : ''
+    });
+  }
+
+  const eData = entriesSheet.getDataRange().getValues();
+  const entries = {};
+  aims.forEach(function (a) { entries[a.id] = []; });
+  for (let i = 1; i < eData.length; i++) {
+    if (!eData[i][0]) continue;
+    const aimId = eData[i][1];
+    if (!entries[aimId]) entries[aimId] = [];
+    entries[aimId].push({
+      id: eData[i][0],
+      aimId: aimId,
+      date: eData[i][2] || '',
+      type: eData[i][3] || 'step',
+      text: eData[i][4] || ''
+    });
+  }
+  return { status: 'success', aims: aims, entries: entries };
+}
+
+/* [72] */ function aimSave(data) {
+  const sheet = getAimsSheet();
+  const now = new Date().toISOString();
+
+  if (data.id) {
+    const values = sheet.getDataRange().getValues();
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][0]) === String(data.id)) {
+        sheet.getRange(i+1, 2).setValue(data.emoji || '');
+        sheet.getRange(i+1, 3).setValue(data.title || '');
+        sheet.getRange(i+1, 4).setValue(data.notes || '');
+        sheet.getRange(i+1, 5).setValue(data.startDate || '');
+        if (data.deadline) updateLinkedCountdown(data.id, data.title, data.deadline);
+        return { status: 'success' };
+      }
+    }
+    return { status: 'error', message: 'aim not found' };
+  }
+
+  const id = 'a' + Date.now() + Math.random().toString(36).slice(2,5);
+  sheet.appendRow([id, data.emoji || '', data.title || '', data.notes || '', data.startDate || '', now]);
+
+  if (data.deadline && data.title) {
+    try {
+      const cdSheet = getCountdownsSheet();
+      const cdId = 'c' + Date.now() + Math.random().toString(36).slice(2,5);
+      cdSheet.appendRow([cdId, '🎯', data.title, data.deadline, 'Auto from aim: ' + data.title, '', now, now]);
+    } catch (e) {
+      Logger.log('Failed to create countdown for aim: ' + e);
+    }
+  }
+
+  return { status: 'success', id: id };
+}
+
+/* [73] */ function aimDelete(id) {
+  if (!id) return { status: 'error', message: 'no id' };
+  const sheet = getAimsSheet();
+  const data = sheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][0]) === String(id)) { sheet.deleteRow(i+1); break; }
+  }
+  const eSheet = getAimEntriesSheet();
+  const eData = eSheet.getDataRange().getValues();
+  for (let i = eData.length - 1; i >= 1; i--) {
+    if (String(eData[i][1]) === String(id)) eSheet.deleteRow(i+1);
+  }
+  return { status: 'success' };
+}
+
+/* [74] */ function aimEntryAdd(data) {
+  const aimId = data.aimId;
+  const dateStr = data.date;
+  const type = data.type || 'step';
+  const text = String(data.text || '').trim();
+  if (!aimId || !dateStr || !text) return { status: 'error', message: 'missing fields' };
+
+  const aSheet = getAimsSheet();
+  const aData = aSheet.getDataRange().getValues();
+  let startDMY = null;
+  for (let i = 1; i < aData.length; i++) {
+    if (String(aData[i][0]) === String(aimId)) { startDMY = aData[i][4]; break; }
+  }
+  if (!startDMY) return { status: 'error', message: 'aim not found' };
+
+  const start = parseDMY(startDMY);
+  const entry = parseDMY(dateStr);
+  if (!start || !entry) return { status: 'error', message: 'bad date' };
+  const startDate = new Date(start[0], start[1], start[2]);
+  const entryDate = new Date(entry[0], entry[1], entry[2]);
+  if (entryDate < startDate) {
+    return { status: 'error', message: 'Cannot log before aim start (' + startDMY + ')' };
+  }
+
+  const sheet = getAimEntriesSheet();
+  const id = 'e' + Date.now() + Math.random().toString(36).slice(2,5);
+  sheet.appendRow([id, aimId, dateStr, type, text, new Date().toISOString()]);
+  return { status: 'success', id: id };
+}
+
+/* [75] */ function aimEntryDelete(id) {
+  if (!id) return { status: 'error', message: 'no id' };
+  const sheet = getAimEntriesSheet();
+  const data = sheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][0]) === String(id)) { sheet.deleteRow(i+1); break; }
+  }
+  return { status: 'success' };
+}
+
+/* [76] */ function aimEntryUpdate(data) {
+  const id = data.id;
+  if (!id) return { status: 'error', message: 'no id' };
+  const sheet = getAimEntriesSheet();
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][0]) === String(id)) {
+      sheet.getRange(i+1, 3).setValue(data.date || '');
+      sheet.getRange(i+1, 5).setValue(String(data.text || '').trim());
+      return { status: 'success' };
+    }
+  }
+  return { status: 'error', message: 'not found' };
+}
+
+/* [77] */ function updateLinkedCountdown(aimId, title, deadline) {
+  try {
+    const cdSheet = getCountdownsSheet();
+    const data = cdSheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][2]).trim() === String(title).trim()) {
+        cdSheet.getRange(i+1, 3).setValue(title);
+        cdSheet.getRange(i+1, 4).setValue(deadline);
+        cdSheet.getRange(i+1, 8).setValue(new Date().toISOString());
+        break;
+      }
+    }
+  } catch (e) {
+    Logger.log('updateLinkedCountdown failed: ' + e);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION P — STREAK
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [78] */ function getStreakSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('STREAK_LOG');
+  if (!sheet) {
+    sheet = ss.insertSheet('STREAK_LOG');
+    sheet.appendRow(['Date','Manual','At']);
+    sheet.getRange(1,1,1,3).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+  return sheet;
+}
+
+/* [79] */ function streakLoad() {
+  const sheet = getStreakSheet();
+  const data = sheet.getDataRange().getValues();
+  const manual = {};
+  for (let i = 1; i < data.length; i++) {
+    let d = data[i][0];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    const key = String(d).trim();
+    if (!key) continue;
+    manual[key] = String(data[i][1] || '').trim().toUpperCase();
+  }
+
+  const tz = Session.getScriptTimeZone();
+  const today = new Date();
+  const days = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dmy = Utilities.formatDate(d, tz, 'dd-MMM-yyyy');
+    const iso = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+
+    let on = false;
+    const man = manual[dmy];
+    if (man === 'YES') on = true;
+    else if (man === 'NO') on = false;
+    else {
+      const stats = getDayStatsFromCache(dmy);
+      if (stats && stats.total > 0 && stats.pct >= 70) on = true;
+    }
+    days.push({ date: iso, on: on });
+  }
+
+  let cur = 0;
+  for (let i = days.length - 1; i >= 0; i--) {
+    if (days[i].on) cur++;
+    else break;
+  }
+
+  let longest = 0, run = 0;
+  days.forEach(function (d) {
+    if (d.on) { run++; if (run > longest) longest = run; }
+    else run = 0;
+  });
+
+  const total = days.filter(function (d) { return d.on; }).length;
+  const todayIso = Utilities.formatDate(today, tz, 'yyyy-MM-dd');
+  const todayOn = days.find(function (d) { return d.date === todayIso; })?.on || false;
+
+  return { status: 'success', days: days, current: cur, longest: longest, total: total, today: todayOn };
+}
+
+/* [80] */ function streakToggle(dateDMY, force) {
+  if (!dateDMY) return { status: 'error', message: 'no date' };
+
+  const targetDMY = dateToDMY(dateDMY);
+  const sheet = getStreakSheet();
+  const data = sheet.getDataRange().getValues();
+  const val = force ? 'YES' : 'NO';
+  const now = new Date().toISOString();
+
+  const matches = [];
+  for (let i = 1; i < data.length; i++) {
+    let d = data[i][0];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(d).trim() === targetDMY) matches.push(i + 1);
+  }
+
+  if (matches.length > 0) {
+    const first = matches[0];
+    const c1 = sheet.getRange(first, 1);
+    c1.setNumberFormat('@');
+    c1.setValue(targetDMY);
+    sheet.getRange(first, 2).setValue(val);
+    sheet.getRange(first, 3).setValue(now);
+
+    for (let k = matches.length - 1; k >= 1; k--) sheet.deleteRow(matches[k]);
+  } else {
+    const newRow = sheet.getLastRow() + 1;
+    const dateCell = sheet.getRange(newRow, 1);
+    dateCell.setNumberFormat('@');
+    dateCell.setValue(targetDMY);
+    sheet.getRange(newRow, 2).setValue(val);
+    sheet.getRange(newRow, 3).setValue(now);
+  }
+
+  try { sortSheetRowsByDateDesc('STREAK_LOG', 0); } catch (_) {}
+  return { status: 'success', date: targetDMY, value: val };
+}
+
+/* [81] */ function getDayStatsFromCache(dmy) {
+  const grid = readTrackerGrid([dmy]);
+  const col = grid.dates[dmy];
+  if (col === undefined) return null;
+  let yes=0, no=0, part=0;
+  for (let r = 0; r < grid.rows.length; r++) {
+    const row = grid.rows[r];
+    if (row.type !== 'STATUS') continue;
+    const val = String(grid.raw[r+1][col] || '').trim().toUpperCase();
+    if (val === 'YES') yes++;
+    else if (val === 'NO') no++;
+    else if (val === 'PARTIAL') part++;
+  }
+  const total = yes + no + part;
+  return { yes: yes, total: total, pct: total > 0 ? Math.round(yes/total*100) : 0 };
+}
+
+/* [82] */ function streakHeatmap() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER TRACKER');
+  if (!sheet) return { status: 'error', message: 'no tracker' };
+
+  const all = sheet.getDataRange().getValues();
+  if (!all.length) return { status: 'success', days: [] };
+
+  const dateCols = {};
+  for (let c = 5; c < all[0].length; c++) {
+    let hv = all[0][c];
+    if (hv instanceof Date) hv = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    const key = String(hv).trim();
+    if (key) dateCols[key] = c;
+  }
+
+  const tz = Session.getScriptTimeZone();
+  const today = new Date(); today.setHours(0,0,0,0);
+  const out = [];
+
+  for (let offset = 29; offset >= 0; offset--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - offset);
+    const dmy = Utilities.formatDate(d, tz, 'dd-MMM-yyyy');
+    const iso = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+
+    const col = dateCols[dmy];
+    let yes = 0, no = 0, total = 0;
+
+    if (col !== undefined) {
+      for (let r = 1; r < all.length; r++) {
+        if (String(all[r][3]).trim() !== 'STATUS') continue;
+        const v = String(all[r][col] || '').trim().toUpperCase();
+        if (v === 'YES') { yes++; total++; }
+        else if (v === 'NO') { no++; total++; }
+        else if (v === 'PARTIAL') { yes++; total++; }
+      }
+    }
+
+    let state = 'nodata';
+    if (total > 0) state = (yes > 0) ? 'on' : 'off';
+
+    out.push({ date: iso, dmy: dmy, day: d.getDate(), yes: yes, total: total, state: state });
+  }
+
+  return { status: 'success', days: out };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION Q — DAY ABANDON
+   ═══════════════════════════════════════════════════════════════ */
+
+const ABANDON_HALF = { water: 6, 'break': 8, hair: 1, face: 1, teeth: 1 };
+
+/* [83] */ function abandonDay(dateDMY, reason) {
+  if (!dateDMY) return { status: 'error', message: 'no date' };
+  reason = String(reason || '').trim();
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tracker = ss.getSheetByName('MASTER TRACKER');
+  if (!tracker) return { status: 'error', message: 'no tracker sheet' };
+
+  const today = dateToDMY(dateDMY);
+  const all = tracker.getDataRange().getValues();
+  if (!all.length) return { status: 'error', message: 'tracker empty' };
+
+  let dateCol = -1;
+  for (let c = 5; c < all[0].length; c++) {
+    let hv = all[0][c];
+    if (hv instanceof Date) hv = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(hv).trim() === today) { dateCol = c; break; }
+  }
+  if (dateCol === -1) {
+    tracker.insertColumnAfter(5);
+    dateCol = 5;
+    tracker.getRange(1, dateCol+1).setValue(today);
+    tracker.getRange(1, dateCol+1).setNumberFormat('@');
+    tracker.getRange(1, dateCol+1).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+
+  let statusWritten = 0;
+  for (let r = 1; r < all.length; r++) {
+    const area = all[r][2];
+    const type = String(all[r][3] || '').trim();
+    if (!area) continue;
+    if (type === 'STATUS') {
+      const cell = tracker.getRange(r+1, dateCol+1);
+      cell.setValue('NO');
+      cell.setBackground('#f87171').setFontColor('#0f172a').setFontWeight('bold');
+      statusWritten++;
+    } else if (type === 'REASON') {
+      tracker.getRange(r+1, dateCol+1).setValue(reason);
+    }
+  }
+
+  writeAbandonReasonRow(tracker, today, dateCol, reason);
+
+  const hh = ss.getSheetByName('HEALTH_HABITS');
+  if (hh) {
+    const data = hh.getDataRange().getValues();
+    let row = -1;
+    for (let i = 1; i < data.length; i++) {
+      const c = data[i][0];
+      let cd = '';
+      if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      else {
+        const s = String(c).trim();
+        if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+          const dt = new Date(s);
+          if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+        } else cd = s;
+      }
+      if (cd === today) { row = i+1; break; }
+    }
+    const savedAt = new Date().toISOString();
+    const rowVals = [
+      today,
+      ABANDON_HALF.water, ABANDON_HALF['break'], ABANDON_HALF.hair, ABANDON_HALF.face, ABANDON_HALF.teeth,
+      12, 15, 2, 2, 2,
+      savedAt, 0, 0, 0, 0
+    ];
+    if (row !== -1) {
+      hh.getRange(row, 1).setNumberFormat('@');
+      hh.getRange(row, 1, 1, rowVals.length).setValues([rowVals]);
+    } else {
+      const newRow = hh.getLastRow() + 1;
+      hh.getRange(newRow, 1).setNumberFormat('@');
+      hh.getRange(newRow, 1, 1, rowVals.length).setValues([rowVals]);
+    }
+  }
+
+  try {
+    const r = writeFullFoodDefaults(today);
+    Logger.log('abandonDay: wrote food defaults: ' + JSON.stringify(r));
+  } catch (e) {
+    Logger.log('abandonDay: writeFullFoodDefaults FAILED: ' + e);
+  }
+
+  try {
+    const foodCal = getFoodCaloriesForDate(today);
+    updateNutritionSummary(today, foodCal, 0);
+    Logger.log('abandonDay: nutrition updated with food=' + foodCal);
+  } catch (e) {
+    Logger.log('abandonDay: nutrition update FAILED: ' + e);
+  }
+
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.remove('lifeos_load_' + today);
+    cache.remove('dash_v2_today_' + today);
+    cache.remove('dash_v2_week_' + today);
+    cache.remove('dash_v2_month_' + today);
+  } catch (_) {}
+
+  return { status: 'success', tasksMarked: statusWritten, reason: reason };
+}
+
+/* [84] */ function unabandonDay(dateDMY) {
+  if (!dateDMY) return { status: 'error', message: 'no date' };
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tracker = ss.getSheetByName('MASTER TRACKER');
+  if (!tracker) return { status: 'error', message: 'no tracker' };
+
+  const today = dateToDMY(dateDMY);
+  const all = tracker.getDataRange().getValues();
+
+  let dateCol = -1;
+  for (let c = 5; c < all[0].length; c++) {
+    let hv = all[0][c];
+    if (hv instanceof Date) hv = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(hv).trim() === today) { dateCol = c; break; }
+  }
+  if (dateCol === -1) return { status: 'success', message: 'no column to clear' };
+
+  for (let r = 1; r < all.length; r++) {
+    const area = all[r][2];
+    const type = String(all[r][3] || '').trim();
+    if (!area) continue;
+    if (type === 'STATUS') {
+      const cell = tracker.getRange(r+1, dateCol+1);
+      cell.setValue('YES');
+      cell.setBackground('#4ade80').setFontColor('#0f172a').setFontWeight('bold');
+    } else if (type === 'REASON') {
+      tracker.getRange(r+1, dateCol+1).setValue('');
+    }
+  }
+
+  clearAbandonReasonRow(tracker, today, dateCol);
+
+  const hh = ss.getSheetByName('HEALTH_HABITS');
+  if (hh) {
+    const data = hh.getDataRange().getValues();
+    let row = -1;
+    for (let i = 1; i < data.length; i++) {
+      const c = data[i][0];
+      let cd = '';
+      if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      else {
+        const s = String(c).trim();
+        if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+          const dt = new Date(s);
+          if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+        } else cd = s;
+      }
+      if (cd === today) { row = i+1; break; }
+    }
+    const savedAt = new Date().toISOString();
+    const rowVals = [today, 0, 0, 0, 0, 0, 12, 15, 2, 2, 2, savedAt, 0, 0, 0, 0];
+    if (row !== -1) {
+      hh.getRange(row, 1).setNumberFormat('@');
+      hh.getRange(row, 1, 1, rowVals.length).setValues([rowVals]);
+    } else {
+      const newRow = hh.getLastRow() + 1;
+      hh.getRange(newRow, 1).setNumberFormat('@');
+      hh.getRange(newRow, 1, 1, rowVals.length).setValues([rowVals]);
+    }
+  }
+
+  try {
+    const fl = ss.getSheetByName('FOOD_LOG');
+    if (fl) {
+      const fdata = fl.getDataRange().getValues();
+      for (let i = fdata.length - 1; i >= 1; i--) {
+        const c = fdata[i][0];
+        let cd = '';
+        if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+        else {
+          const s = String(c).trim();
+          if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+            const dt = new Date(s);
+            if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+          } else cd = s;
+        }
+        if (cd === today) fl.deleteRow(i + 1);
+      }
+    }
+    const ns = ss.getSheetByName('NUTRITION_SUMMARY');
+    if (ns) {
+      const ndata = ns.getDataRange().getValues();
+      for (let i = ndata.length - 1; i >= 1; i--) {
+        const c = ndata[i][0];
+        let cd = '';
+        if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+        else {
+          const s = String(c).trim();
+          if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+            const dt = new Date(s);
+            if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+          } else cd = s;
+        }
+        if (cd === today) { ns.deleteRow(i + 1); break; }
+      }
+    }
+  } catch (e) {
+    Logger.log('unabandon food cleanup failed: ' + e);
+  }
+
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.remove('lifeos_load_' + today);
+    cache.remove('dash_v2_today_' + today);
+    cache.remove('dash_v2_week_' + today);
+    cache.remove('dash_v2_month_' + today);
+  } catch (_) {}
+
+  return { status: 'success' };
+}
+
+/* [85] */ function getAbandonReasonRowIndex(sheet) {
+  const colA = sheet.getRange(1, 1, sheet.getLastRow(), 1).getValues();
+  for (let i = 0; i < colA.length; i++) {
+    if (String(colA[i][0]).trim() === '📊 ABANDONED REASON') return i + 1;
+  }
+  return -1;
+}
+
+/* [86] */ function writeAbandonReasonRow(sheet, dateDMY, dateCol, reason) {
+  let rowIdx = getAbandonReasonRowIndex(sheet);
+  if (rowIdx === -1) {
+    rowIdx = sheet.getLastRow() + 1;
+    sheet.getRange(rowIdx, 1).setValue('📊 ABANDONED REASON')
+      .setFontWeight('bold').setBackground('#7f1d1d').setFontColor('#ffffff');
+    sheet.getRange(rowIdx, 2).setValue('—');
+    sheet.getRange(rowIdx, 3).setValue('');
+    sheet.getRange(rowIdx, 4).setValue('REASON');
+  }
+  const cell = sheet.getRange(rowIdx, dateCol + 1);
+  cell.setValue(reason);
+  cell.setBackground('#fbbf24').setFontColor('#0f172a').setFontWeight('bold');
+}
+
+/* [87] */ function clearAbandonReasonRow(sheet, dateDMY, dateCol) {
+  const rowIdx = getAbandonReasonRowIndex(sheet);
+  if (rowIdx === -1) return;
+  sheet.getRange(rowIdx, dateCol + 1).setValue('').setBackground(null);
+}
+
+/* [88] */ function getAbandonReasonForDate(dateDMY) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER TRACKER');
+  if (!sheet) return { abandoned: false, reason: '' };
+  const rowIdx = getAbandonReasonRowIndex(sheet);
+  if (rowIdx === -1) return { abandoned: false, reason: '' };
+
+  const today = dateToDMY(dateDMY);
+  const all = sheet.getDataRange().getValues();
+  let dateCol = -1;
+  for (let c = 5; c < all[0].length; c++) {
+    let hv = all[0][c];
+    if (hv instanceof Date) hv = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(hv).trim() === today) { dateCol = c; break; }
+  }
+  if (dateCol === -1) return { abandoned: false, reason: '' };
+
+  const reason = String(all[rowIdx-1][dateCol] || '').trim();
+  return { abandoned: reason !== '', reason: reason };
+}
+
+/* [89] */ function writeFullFoodDefaults(dateDMY) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const today = dateToDMY(dateDMY);
+
+  let sheet = ss.getSheetByName('FOOD_LOG');
+  if (!sheet) {
+    sheet = ss.insertSheet('FOOD_LOG');
+    sheet.appendRow(['Date','Meal','Slot','Main Food','Main Qty','Kolambu','Kolambu Qty',
+                     'Side 1','Side 1 Qty','Side 2','Side 2 Qty','Time','Calories','Protein']);
+    sheet.getRange(1,1,1,14).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+
+  // Wipe all rows for this date
+  const data = sheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    const c = data[i][0];
+    let cd = '';
+    if (c instanceof Date) cd = Utilities.formatDate(c, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    else {
+      const s = String(c).trim();
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+        const dt = new Date(s);
+        if (!isNaN(dt.getTime())) cd = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      } else cd = s;
+    }
+    if (cd === today) sheet.deleteRow(i + 1);
+  }
+
+  const MEALS = ['Breakfast','Morning Break','Lunch','Evening Snack','Dinner'];
+  const MEAL_TIMES = {
+    'Breakfast': '08.15', 'Morning Break': '10.15', 'Lunch': '13.00',
+    'Evening Snack': '15.00', 'Dinner': '20.00'
+  };
+
+  const defaults = getFoodDefaults();
+  const db = getFoodDatabase();
+  const rows = [];
+  let totalCal = 0;
+
+  MEALS.forEach(function (meal) {
+    const mealDefs = defaults[meal] || {};
+    const time = MEAL_TIMES[meal] || '';
+    ['main','kolambu','side1','side2'].forEach(function (slot) {
+      const def = mealDefs[slot];
+      if (!def || !def.name) return;
+      const info = db[def.name] || { calories:0, protein:0 };
+      const qty = def.qty || 1;
+      const cal = (info.calories || 0) * qty;
+      const pro = (info.protein  || 0) * qty;
+      rows.push([today, meal, slot, def.name, qty, '','','','','','', time, Math.round(cal), Math.round(pro)]);
+      totalCal += cal;
+    });
+  });
+
+  if (rows.length) {
+    const start = sheet.getLastRow() + 1;
+    sheet.getRange(start, 1, rows.length, 1).setNumberFormat('@');
+    const range = sheet.getRange(start, 1, rows.length, 14);
+    range.setValues(rows);
+    sheet.getRange(start, 13, rows.length, 2).setNumberFormat('#,##0');
+  }
+
+  Logger.log('writeFullFoodDefaults: ' + rows.length + ' rows for ' + today + ' (' + Math.round(totalCal) + ' cal)');
+  return { rows: rows.length, calories: Math.round(totalCal) };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION R — TIME SKIPS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [90] */ function getTimeSkipsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('TIME_SKIPS');
+  if (!sheet) {
+    sheet = ss.insertSheet('TIME_SKIPS');
+    sheet.appendRow(['ID','Date','FromTime','ToTime','Title','Notes','CreatedAt']);
+    sheet.getRange(1,1,1,7).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+  return sheet;
+}
+
+/* [91] */ function timeSkipsLoad() {
+  const sheet = getTimeSkipsSheet();
+  const data = sheet.getDataRange().getValues();
+  const out = [];
+  for (let i = 1; i < data.length; i++) {
+    if (!data[i][0]) continue;
+    let d = data[i][1];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    out.push({
+      id: data[i][0],
+      date: String(d || ''),
+      from: data[i][2] || '',
+      to: data[i][3] || '',
+      title: data[i][4] || '',
+      notes: data[i][5] || ''
+    });
+  }
+  return { status: 'success', items: out };
+}
+
+/* [92] */ function timeSkipSave(data) {
+  const sheet = getTimeSkipsSheet();
+  const now = new Date().toISOString();
+
+  const from  = String(data.from || '').trim();
+  const to    = String(data.to   || '').trim();
+  const date  = String(data.date || '').trim();
+  const title = String(data.title || '').trim();
+
+  if (!date)  return { status: 'error', message: 'date required' };
+  if (!from)  return { status: 'error', message: 'from time required' };
+  if (!to)    return { status: 'error', message: 'to time required' };
+  if (!title) return { status: 'error', message: 'title required' };
+
+  let savedId = data.id;
+
+  if (data.id) {
+    const values = sheet.getDataRange().getValues();
+    let found = false;
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][0]) === String(data.id)) {
+        sheet.getRange(i+1, 2).setValue("'" + date);
+        sheet.getRange(i+1, 3).setValue(from);
+        sheet.getRange(i+1, 4).setValue(to);
+        sheet.getRange(i+1, 5).setValue(title);
+        sheet.getRange(i+1, 6).setValue(data.notes || '');
+        found = true;
+        break;
+      }
+    }
+    if (!found) return { status: 'error', message: 'skip not found' };
+  } else {
+    savedId = 's' + Date.now() + Math.random().toString(36).slice(2,5);
+    sheet.appendRow([savedId, "'" + date, from, to, title, data.notes || '', now]);
+  }
+
+  applyTimeSkip(date, from, to, savedId);
+  return { status: 'success', id: savedId };
+}
+
+/* [93] */ function timeSkipDelete(id) {
+  if (!id) return { status: 'error', message: 'no id' };
+  const sheet = getTimeSkipsSheet();
+
+  const data = sheet.getDataRange().getValues();
+  let skipDate = '', skipFrom = '', skipTo = '';
+  for (let i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === String(id)) {
+      let d = data[i][1];
+      if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      skipDate = String(d || '').trim();
+      skipFrom = String(data[i][2] || '').trim();
+      skipTo   = String(data[i][3] || '').trim();
+      sheet.deleteRow(i+1);
+      break;
+    }
+  }
+
+  if (skipDate) removeTimeSkip(skipDate, skipFrom, skipTo);
+  return { status: 'success' };
+}
+
+/* [94] */ function applyTimeSkip(dateDMY, fromDot, toDot, skipId) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('CALENDAR_ITEMS');
+  if (!sheet) return;
+
+  const targetDMY = dateToDMY(dateDMY);
+  const fromMin = hhmmToMin(fromDot);
+  const toMin   = hhmmToMin(toDot);
+
+  const data = sheet.getDataRange().getValues();
+  let touched = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const id = String(data[i][0] || '');
+    if (!id) continue;
+    if (id.indexOf('cdrem_') === 0) continue;
+
+    const type = String(data[i][1] || '').trim();
+    if (type !== 'reminder') continue;
+
+    let d = data[i][2];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    const itemDate = String(d || '').trim();
+    if (itemDate !== targetDMY) continue;
+
+    const itemMin = hhmmToMin(data[i][3]);
+    if (itemMin === null) continue;
+    if (itemMin < fromMin || itemMin >= toMin) continue;
+
+    sheet.getRange(i+1, 10).setValue('skipped');
+
+    const eventId = String(data[i][11] || '').trim();
+    if (eventId) {
+      try {
+        const cals = CalendarApp.getCalendarsByName('LifeOS');
+        for (let c = 0; c < cals.length; c++) {
+          const ev = cals[c].getEventById(eventId);
+          if (ev) {
+            ev.removeAllReminders();
+            ev.setTitle('[SKIPPED] ' + ev.getTitle().replace(/^\[SKIPPED\]\s*/, ''));
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+    touched++;
+  }
+
+  try { silenceRoutineInSkip(dateDMY, fromDot, toDot); } catch (_) {}
+  try { markRoutineAsSkipped(dateDMY, fromDot, toDot, 'Time skip'); } catch (_) {}
+  return touched;
+}
+
+/* [95] */ function removeTimeSkip(dateDMY, fromDot, toDot) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('CALENDAR_ITEMS');
+  if (!sheet) return;
+
+  const targetDMY = dateToDMY(dateDMY);
+  const fromMin = hhmmToMin(fromDot);
+  const toMin   = hhmmToMin(toDot);
+
+  const data = sheet.getDataRange().getValues();
+  let restored = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const id = String(data[i][0] || '');
+    if (!id) continue;
+    if (id.indexOf('cdrem_') === 0) continue;
+
+    const type = String(data[i][1] || '').trim();
+    if (type !== 'reminder') continue;
+    if (String(data[i][9] || '').trim() !== 'skipped') continue;
+
+    let d = data[i][2];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    const itemDate = String(d || '').trim();
+    if (itemDate !== targetDMY) continue;
+
+    const itemMin = hhmmToMin(data[i][3]);
+    if (itemMin === null) continue;
+    if (itemMin < fromMin || itemMin >= toMin) continue;
+
+    sheet.getRange(i+1, 10).setValue('');
+
+    const eventId = String(data[i][11] || '').trim();
+    if (eventId) {
+      try {
+        const cals = CalendarApp.getCalendarsByName('LifeOS');
+        for (let c = 0; c < cals.length; c++) {
+          const ev = cals[c].getEventById(eventId);
+          if (ev) {
+            ev.setTitle(ev.getTitle().replace(/^\[SKIPPED\]\s*/, ''));
+            const remind = Number(data[i][8]) || 15;
+            try { ev.addPopupReminder(remind); } catch (_) {}
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+    restored++;
+  }
+
+  try { unsilenceRoutineInSkip(dateDMY, fromDot, toDot); } catch (_) {}
+  try { unmarkRoutineAsSkipped(dateDMY, fromDot, toDot); } catch (_) {}
+  return restored;
+}
+
+/* [96] */ function silenceRoutineInSkip(dateDMY, fromDot, toDot) {
+  const cal = getOrCreateRoutineCalendar();
+  const parsed = parseDMY(dateDMY);
+  if (!parsed) return 0;
+
+  const y = parsed[0], m = parsed[1], d = parsed[2];
+  const dayStart = new Date(y, m, d, 0, 0, 0);
+  const dayEnd   = new Date(y, m, d, 23, 59, 59);
+  const evs = cal.getEvents(dayStart, dayEnd);
+
+  const fromMin = hhmmToMin(fromDot);
+  const toMin   = hhmmToMin(toDot);
+
+  let touched = 0;
+  evs.forEach(function (ev) {
+    const st = ev.getStartTime();
+    const evMin = st.getHours() * 60 + st.getMinutes();
+    if (evMin < fromMin || evMin >= toMin) return;
+
+    try { ev.removeAllReminders(); } catch (_) {}
+    const t = ev.getTitle();
+    if (t.indexOf('[SKIP] ') !== 0) {
+      try { ev.setTitle('[SKIP] ' + t); } catch (_) {}
+    }
+    touched++;
+  });
+  return touched;
+}
+
+/* [97] */ function unsilenceRoutineInSkip(dateDMY, fromDot, toDot) {
+  const cal = getOrCreateRoutineCalendar();
+  const parsed = parseDMY(dateDMY);
+  if (!parsed) return 0;
+
+  const y = parsed[0], m = parsed[1], d = parsed[2];
+  const dayStart = new Date(y, m, d, 0, 0, 0);
+  const dayEnd   = new Date(y, m, d, 23, 59, 59);
+  const evs = cal.getEvents(dayStart, dayEnd);
+
+  const fromMin = hhmmToMin(fromDot);
+  const toMin   = hhmmToMin(toDot);
+
+  let restored = 0;
+  evs.forEach(function (ev) {
+    const st = ev.getStartTime();
+    const evMin = st.getHours() * 60 + st.getMinutes();
+    if (evMin < fromMin || evMin >= toMin) return;
+
+    const t = ev.getTitle();
+    if (t.indexOf('[SKIP] ') !== 0) return;
+
+    try { ev.setTitle(t.replace(/^\[SKIP\]\s*/, '')); } catch (_) {}
+    try { ev.removeAllReminders(); } catch (_) {}
+    try { ev.addPopupReminder(ROUTINE_LEAD_MIN); } catch (_) {}
+    restored++;
+  });
+  return restored;
+}
+
+/* [98] */ function markRoutineAsSkipped(dateDMY, fromDot, toDot, reason) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER TRACKER');
+  if (!sheet) return 0;
+
+  const targetDMY = dateToDMY(dateDMY);
+  const fromMin = hhmmToMin(fromDot);
+  const toMin   = hhmmToMin(toDot);
+
+  const all = sheet.getDataRange().getValues();
+  if (!all.length) return 0;
+
+  let dateCol = -1;
+  for (let c = 5; c < all[0].length; c++) {
+    let hv = all[0][c];
+    if (hv instanceof Date) hv = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(hv).trim() === targetDMY) { dateCol = c; break; }
+  }
+
+  if (dateCol === -1) {
+    sheet.insertColumnAfter(5);
+    dateCol = 5;
+    const hdrCell = sheet.getRange(1, dateCol + 1);
+    hdrCell.setValue(targetDMY);
+    hdrCell.setNumberFormat('@');
+    hdrCell.setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+
+  const tasks = getTasksForDate(dateDMY);
+  const byArea = {};
+  tasks.forEach(function (t) {
+    byArea[String(t.area).trim()] = parseStartMinForSkip(t.plannedTime);
+  });
+
+  let touched = 0;
+  for (let r = 1; r < all.length; r++) {
+    const area = String(all[r][2] || '').trim();
+    const type = String(all[r][3] || '').trim();
+    if (!area) continue;
+
+    const startMin = byArea[area];
+    if (startMin === undefined) continue;
+    if (startMin < fromMin || startMin >= toMin) continue;
+
+    if (type === 'STATUS') {
+      const cell = sheet.getRange(r+1, dateCol+1);
+      cell.setValue('NO');
+      cell.setBackground('#f87171').setFontColor('#0f172a').setFontWeight('bold');
+      touched++;
+    } else if (type === 'REASON') {
+      sheet.getRange(r+1, dateCol+1).setValue(reason || 'Time skip');
+    }
+  }
+  return touched;
+}
+
+/* [99] */ function unmarkRoutineAsSkipped(dateDMY, fromDot, toDot) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER TRACKER');
+  if (!sheet) return 0;
+
+  const targetDMY = dateToDMY(dateDMY);
+  const fromMin = hhmmToMin(fromDot);
+  const toMin   = hhmmToMin(toDot);
+
+  const all = sheet.getDataRange().getValues();
+  if (!all.length) return 0;
+
+  let dateCol = -1;
+  for (let c = 5; c < all[0].length; c++) {
+    let hv = all[0][c];
+    if (hv instanceof Date) hv = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(hv).trim() === targetDMY) { dateCol = c; break; }
+  }
+  if (dateCol === -1) return 0;
+
+  const tasks = getTasksForDate(dateDMY);
+  const byArea = {};
+  tasks.forEach(function (t) {
+    byArea[String(t.area).trim()] = parseStartMinForSkip(t.plannedTime);
+  });
+
+  let restored = 0;
+  for (let r = 1; r < all.length; r++) {
+    const area = String(all[r][2] || '').trim();
+    const type = String(all[r][3] || '').trim();
+    if (!area) continue;
+
+    const startMin = byArea[area];
+    if (startMin === undefined) continue;
+    if (startMin < fromMin || startMin >= toMin) continue;
+
+    if (type === 'STATUS') {
+      const cell = sheet.getRange(r+1, dateCol+1);
+      if (String(cell.getValue()).trim().toUpperCase() === 'NO') {
+        cell.setValue('YES');
+        cell.setBackground('#4ade80').setFontColor('#0f172a').setFontWeight('bold');
+        restored++;
+      }
+    } else if (type === 'REASON') {
+      sheet.getRange(r+1, dateCol+1).setValue('');
+    }
+  }
+  return restored;
+}
+
+/* [100] */ function isInSkipWindow(dateDMY, timeStr) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('TIME_SKIPS');
+  if (!sheet) return false;
+
+  const targetDMY = dateToDMY(dateDMY);
+  const itemMin = hhmmToMin(timeStr);
+  if (itemMin === null) return false;
+
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    let d = data[i][1];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (String(d).trim() !== targetDMY) continue;
+
+    const fromMin = hhmmToMin(data[i][2]);
+    const toMin   = hhmmToMin(data[i][3]);
+    if (fromMin === null || toMin === null) continue;
+    if (itemMin >= fromMin && itemMin < toMin) return true;
+  }
+  return false;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION S — DASHBOARD
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [101] */ function getDashboardData(period, dateDMY) {
+  period = period || 'today';
+  const cache = CacheService.getScriptCache();
+  const key = 'dash_v2_' + period + '_' + dateDMY;
+
+  const hit = cache.get(key);
+  if (hit) return JSON.parse(hit);
+
+  const result = _getDashboardDataUncached(period, dateDMY);
+
+  if (result && result.status === 'success') {
+    try {
+      const s = JSON.stringify(result);
+      if (s.length < 100000) cache.put(key, s, 300);
+    } catch (e) {
+      Logger.log('[dashboard] cache put failed: ' + e);
+    }
+  }
+  return result;
+}
+
+/* [102] */ function _getDashboardDataUncached(period, dateDMY) {
+  const parts = parseDMY(dateDMY);
+  if (!parts) return { status: 'error', message: 'bad date' };
+  const base = new Date(parts[0], parts[1], parts[2]);
+
+  let startDate, endDate;
+  if (period === 'today') {
+    startDate = new Date(base); endDate = new Date(base);
+  } else if (period === 'week') {
+    const day = base.getDay();
+    startDate = new Date(base);
+    startDate.setDate(base.getDate() - day);
+    endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + 6);
+  } else if (period === 'month') {
+    startDate = new Date(base.getFullYear(), base.getMonth(), 1);
+    endDate   = new Date(base.getFullYear(), base.getMonth() + 1, 0);
+  } else {
+    return { status: 'error', message: 'bad period' };
+  }
+
+  const tz = Session.getScriptTimeZone();
+  const days = [];
+  const d = new Date(startDate);
+  while (d <= endDate) {
+    days.push(Utilities.formatDate(d, tz, 'dd-MMM-yyyy'));
+    d.setDate(d.getDate() + 1);
+  }
+
+  const trackerData   = readTrackerGrid(days);
+  const healthData    = readHealthGrid(days);
+  const nutritionData = readNutritionGrid(days);
+
+  const dailyStats = days.map(function (dmy) { return computeDayStatsFromGrid(dmy, trackerData); });
+
+  const totals = {
+    daysWithData: dailyStats.filter(x => x.total > 0).length,
+    totalTasks: dailyStats.reduce((s, x) => s + x.total, 0),
+    totalYes:   dailyStats.reduce((s, x) => s + x.yes, 0),
+    totalNo:    dailyStats.reduce((s, x) => s + x.no, 0),
+    totalPartial: dailyStats.reduce((s, x) => s + x.partial, 0)
+  };
+  totals.avgCompletion = totals.totalTasks > 0
+    ? Math.round(totals.totalYes / totals.totalTasks * 100) : 0;
+
+  const byHead = {};
+  dailyStats.forEach(function (day) {
+    Object.keys(day.heads || {}).forEach(function (h) {
+      if (!byHead[h]) byHead[h] = { yes:0, no:0, partial:0, total:0 };
+      byHead[h].yes     += day.heads[h].yes;
+      byHead[h].no      += day.heads[h].no;
+      byHead[h].partial += day.heads[h].partial;
+      byHead[h].total   += day.heads[h].yes + day.heads[h].no + day.heads[h].partial;
+    });
+  });
+  Object.keys(byHead).forEach(function (h) {
+    const v = byHead[h];
+    v.pct = v.total > 0 ? Math.round(v.yes / v.total * 100) : 0;
+  });
+
+  let wSum=0,bSum=0,hSum=0,fSum=0,tSum=0, hDays=0;
+  const hit = { water:0, 'break':0, hair:0, face:0, teeth:0 };
+  days.forEach(function (dmy) {
+    const h = healthData[dmy];
+    if (!h) return;
+    wSum += h.water; bSum += h['break']; hSum += h.hair; fSum += h.face; tSum += h.teeth;
+    hDays++;
+    if (h.water   >= 12) hit.water++;
+    if (h['break']>= 15) hit['break']++;
+    if (h.hair    >= 2)  hit.hair++;
+    if (h.face    >= 2)  hit.face++;
+    if (h.teeth   >= 2)  hit.teeth++;
+  });
+  const health = hDays ? {
+    water: Math.round(wSum/hDays*10)/10,
+    'break': Math.round(bSum/hDays*10)/10,
+    hair:  Math.round(hSum/hDays*10)/10,
+    face:  Math.round(fSum/hDays*10)/10,
+    teeth: Math.round(tSum/hDays*10)/10,
+    hitDays: hit
+  } : { water:0,'break':0,hair:0,face:0,teeth:0,hitDays:hit };
+
+  let foodSum=0,burnSum=0,defSum=0,nDays=0;
+  days.forEach(function (dmy) {
+    const n = nutritionData[dmy];
+    if (!n) return;
+    foodSum += n.food; burnSum += n.burn; defSum += n.deficit;
+    nDays++;
+  });
+  const nutrition = nDays ? {
+    foodAvg: Math.round(foodSum/nDays),
+    burnAvg: Math.round(burnSum/nDays),
+    deficitAvg: Math.round(defSum/nDays)
+  } : { foodAvg:0, burnAvg:0, deficitAvg:0 };
+
+  let cur = 0;
+  for (let i = dailyStats.length - 1; i >= 0; i--) {
+    if (dailyStats[i].total > 0 && dailyStats[i].pct >= 70) cur++;
+    else break;
+  }
+
+  let best = null, worst = null;
+  dailyStats.forEach(function (x) {
+    if (x.total === 0) return;
+    if (!best  || x.pct > best.pct)  best  = x;
+    if (!worst || x.pct < worst.pct) worst = x;
+  });
+
+  return {
+    status: 'success', period: period,
+    start: Utilities.formatDate(startDate, tz, 'dd-MMM-yyyy'),
+    end:   Utilities.formatDate(endDate,   tz, 'dd-MMM-yyyy'),
+    daily: dailyStats,
+    totals: totals,
+    byHead: byHead,
+    health: health,
+    nutrition: nutrition,
+    streaks: { completion: cur, best: cur },
+    best: best,
+    worst: worst
+  };
+}
+
+/* [103] */ function readTrackerGrid(days) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER TRACKER');
+  if (!sheet) return { dates: {}, rows: [], raw: [] };
+  const all = sheet.getDataRange().getValues();
+  if (!all.length) return { dates: {}, rows: [], raw: [] };
+
+  const dateCols = {};
+  for (let c = 5; c < all[0].length; c++) {
+    let hv = all[0][c];
+    if (hv instanceof Date) hv = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    const key = String(hv).trim();
+    if (days.indexOf(key) !== -1) dateCols[key] = c;
+  }
+
+  const rows = [];
+  for (let r = 1; r < all.length; r++) {
+    if (!all[r][2] || !all[r][3]) continue;
+    rows.push({ head: all[r][0], area: String(all[r][2]).trim(), type: all[r][3] });
+  }
+  return { dates: dateCols, rows: rows, raw: all };
+}
+
+/* [104] */ function computeDayStatsFromGrid(dmy, grid) {
+  const empty = { date: dmy, yes:0, no:0, partial:0, total:0, pct:0, hasData:false, heads:{} };
+  if (!grid.raw || !grid.raw.length) return empty;
+  const col = grid.dates[dmy];
+  if (col === undefined) return empty;
+
+  const stats = { yes:0, no:0, partial:0, total:0, pct:0, hasData:false, heads:{} };
+  for (let r = 0; r < grid.rows.length; r++) {
+    const row = grid.rows[r];
+    if (row.type !== 'STATUS') continue;
+    const val = String(grid.raw[r+1][col] || '').trim().toUpperCase();
+    if (val !== 'YES' && val !== 'NO' && val !== 'PARTIAL') continue;
+
+    const h = row.head || 'OTHER';
+    if (!stats.heads[h]) stats.heads[h] = { yes:0, no:0, partial:0 };
+
+    if (val === 'YES')     { stats.yes++;     stats.heads[h].yes++;     }
+    else if (val === 'NO') { stats.no++;      stats.heads[h].no++;      }
+    else if (val === 'PARTIAL') { stats.partial++; stats.heads[h].partial++; }
+    stats.hasData = true;
+  }
+  stats.total = stats.yes + stats.no + stats.partial;
+  stats.pct = stats.total > 0 ? Math.round(stats.yes / stats.total * 100) : 0;
+  return Object.assign({ date: dmy }, stats);
+}
+
+/* [105] */ function readHealthGrid(days) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('HEALTH_HABITS');
+  const out = {};
+  if (!sheet) return out;
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    let d = data[i][0];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    const key = String(d).trim();
+    if (days.indexOf(key) === -1) continue;
+    out[key] = {
+      water:    Number(data[i][1]) || 0,
+      'break':  Number(data[i][2]) || 0,
+      hair:     Number(data[i][3]) || 0,
+      face:     Number(data[i][4]) || 0,
+      teeth:    Number(data[i][5]) || 0,
+      cyclingM: Number(data[i][12]) || 0,
+      cyclingE: Number(data[i][13]) || 0,
+      skipping: Number(data[i][14]) || 0,
+      steps:    Number(data[i][15]) || 0
+    };
+  }
+  return out;
+}
+
+/* [106] */ function readNutritionGrid(days) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('NUTRITION_SUMMARY');
+  const out = {};
+  if (!sheet) return out;
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    let d = data[i][0];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    const key = String(d).trim();
+    if (days.indexOf(key) === -1) continue;
+    out[key] = {
+      food:    Number(data[i][2]) || 0,
+      burn:    Number(data[i][4]) || 0,
+      deficit: Number(data[i][5]) || 0
+    };
+  }
+  return out;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION T — ORCHESTRATOR
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [107] */ function refreshCalendarNow() {
+  const t0 = Date.now();
+  Logger.log('══════ REFRESH START ' + new Date() + ' ══════');
+
+  const totals = { routine: null, health: null, routineClean: 0, healthClean: 0 };
+
+  try {
+    totals.routine = syncRoutineTwoDays();
+    Logger.log('  routine sync: ' + JSON.stringify(totals.routine));
+  } catch (e) {
+    Logger.log('  ❌ routine sync failed: ' + e);
+  }
+
+  try {
+    totals.health = syncHealthTwoDays();
+    Logger.log('  health sync: ' + JSON.stringify(totals.health));
+  } catch (e) {
+    Logger.log('  ❌ health sync failed: ' + e);
+  }
+
+  try {
+    totals.routineClean = cleanPastRoutineEvents();
+  } catch (e) {
+    Logger.log('  ❌ routine cleanup failed: ' + e);
+  }
+
+  try {
+    totals.healthClean = cleanPastHealthEvents();
+  } catch (e) {
+    Logger.log('  ❌ health cleanup failed: ' + e);
+  }
+
+  const ms = Date.now() - t0;
+  Logger.log('  took ' + ms + ' ms');
+  Logger.log('══════ REFRESH DONE ══════');
+  return totals;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION U — SORT / MIGRATE HELPERS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [108] */ function sortTrackerDateColumns() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('MASTER TRACKER');
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastCol <= 5) return;
+
+  const headerRow = sheet.getRange(1, 6, 1, lastCol - 5).getValues()[0];
+  const dataBlock = lastRow > 1
+    ? sheet.getRange(2, 6, lastRow - 1, lastCol - 5).getValues()
+    : [];
+
+  const MONTHS = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
+  const cols = [];
+
+  for (let i = 0; i < headerRow.length; i++) {
+    let hv = headerRow[i];
+    let dmy = '';
+    let dt = null;
+
+    if (hv instanceof Date) {
+      dmy = Utilities.formatDate(hv, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+      dt = new Date(hv.getFullYear(), hv.getMonth(), hv.getDate());
+    } else {
+      const s = String(hv).trim();
+      const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+      if (m) {
+        dmy = s;
+        dt = new Date(parseInt(m[3],10), MONTHS[m[2]], parseInt(m[1],10));
+      }
+    }
+
+    if (!dmy || !dt || isNaN(dt.getTime())) continue;
+    cols.push({ dmy: dmy, dt: dt, idx: i });
+  }
+
+  if (cols.length < 2) return;
+  cols.sort(function (a, b) { return b.dt - a.dt; });
+
+  let alreadySorted = true;
+  for (let i = 0; i < cols.length; i++) {
+    if (cols[i].idx !== i) { alreadySorted = false; break; }
+  }
+  if (alreadySorted) return;
+
+  const newHeader = cols.map(function (c) { return c.dmy; });
+  const newData = dataBlock.map(function (row) {
+    return cols.map(function (c) { return row[c.idx]; });
+  });
+
+  sheet.getRange(1, 6, 1, headerRow.length).clearContent();
+  if (lastRow > 1) sheet.getRange(2, 6, lastRow - 1, headerRow.length).clearContent();
+
+  const hdrRange = sheet.getRange(1, 6, 1, newHeader.length);
+  hdrRange.setNumberFormat('@');
+  hdrRange.setValues([newHeader]);
+  hdrRange.setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+
+  if (newData.length) {
+    sheet.getRange(2, 6, newData.length, newHeader.length).setValues(newData);
+  }
+}
+
+/* [109] */ function sortSheetRowsByDateDesc(sheetName, dateColIndex) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 3) return;
+
+  const rows = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const MONTHS = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
+
+  const tagged = rows.map(function (r, idx) {
+    let d = r[dateColIndex];
+    let dt = null;
+    if (d instanceof Date) dt = d;
+    else {
+      const s = String(d).trim();
+      const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+      if (m) dt = new Date(parseInt(m[3],10), MONTHS[m[2]], parseInt(m[1],10));
+    }
+    return { row: r, dt: dt, original: idx };
+  });
+
+  const sortable = tagged.filter(function (t) { return t.dt && !isNaN(t.dt.getTime()); });
+  if (sortable.length < 2) return;
+
+  let ok = true;
+  for (let i = 1; i < sortable.length; i++) {
+    if (sortable[i-1].dt < sortable[i].dt) { ok = false; break; }
+  }
+  if (ok) return;
+
+  sortable.sort(function (a, b) { return b.dt - a.dt; });
+
+  const sortedRows = sortable.map(function (t) { return t.row; });
+  let cursor = 0;
+  const finalRows = tagged.map(function (t) {
+    if (t.dt && !isNaN(t.dt.getTime())) return sortedRows[cursor++];
+    return t.row;
+  });
+
+  sheet.getRange(2, 1, finalRows.length, lastCol).setValues(finalRows);
+}
+/* [W01] Load work rows for a given month + year. */
+function workPlanLoad(year, month) {
+  const sheet = getWorkSheet();
+  const data = sheet.getDataRange().getValues();
+  const rows = [];
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun',
+                  'Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthStr = MONTHS[month];
+
+  for (let i = 1; i < data.length; i++) {
+    const d = data[i][0];
+    if (!d) continue;
+
+    let dmy = '';
+    if (d instanceof Date) dmy = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    else dmy = String(d).trim();
+
+    // Accept both "1-Oct-26" (your format) and "01-Oct-2026"
+    let m = dmy.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+    let day, mon, yr;
+    if (m) {
+      day = parseInt(m[1], 10);
+      mon = m[2];
+      yr = parseInt(m[3], 10);
+    } else {
+      m = dmy.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
+      if (!m) continue;
+      day = parseInt(m[1], 10);
+      mon = m[2];
+      yr = 2000 + parseInt(m[3], 10);
+    }
+
+    if (mon !== monthStr) continue;
+    if (yr !== year) continue;
+
+    rows.push({
+      rowIdx: i + 1,
+      date: dmy,
+      day: day,
+      dow: String(data[i][1] || '').trim(),
+      planned: String(data[i][2] || '').trim(),
+      plannedOccRaw: data[i][3],
+      actual: String(data[i][4] || '').trim(),
+      actualOccRaw: data[i][5],
+      additional: String(data[i][6] || '').trim(),
+      notes: String(data[i][7] || '').trim(),                  // column H
+      skip: String(data[i][8] || '').trim().toUpperCase() === 'YES'   // column I
+    });
+  }
+
+  return {
+    status: 'success',
+    year: year,
+    month: month,
+    rows: rows,
+    dropdown: WORK_REPORT_OPTIONS
+  };
+}
+
+/* [W02] Save actual report + occurrence for a specific row. */
+/* [W02] Save actual report + occurrence for a specific row. */
+function workActualSave(payload) {
+  const rowIdx = Number(payload.rowIdx) || 0;
+  const actual = String(payload.actual || '').trim();
+  const actualOcc = String(payload.actualOcc || '').trim();
+  if (!rowIdx) return { status: 'error', message: 'no rowIdx' };
+
+  const sheet = getWorkSheet();
+  sheet.getRange(rowIdx, 5).setValue(actual);      // column E
+  sheet.getRange(rowIdx, 6).setValue(actualOcc);   // column F
+
+  return { status: 'success', rowIdx: rowIdx };
+}
+
+/* [W03] Add an additional report row for a date.
+   Planned cols stay empty; actual text goes to col D. */
+/* [W03] Append text to the ADDITIONAL REPORT column (G) of an existing row. */
+function workAdditionalAdd(payload) {
+  const rowIdx = Number(payload.rowIdx) || 0;
+  const text = String(payload.text || '').trim();
+  if (!rowIdx) return { status: 'error', message: 'no rowIdx' };
+
+  const sheet = getWorkSheet();
+  const current = String(sheet.getRange(rowIdx, 7).getValue() || '').trim();
+  const updated = current ? (current + '\n' + text) : text;
+  sheet.getRange(rowIdx, 7).setValue(updated);
+
+  return { status: 'success', rowIdx: rowIdx, additional: updated };
+}
+
+/* [W04] Update the text of an additional report row. */
+/* [W04] Replace the entire ADDITIONAL REPORT text for a row. */
+function workAdditionalUpdate(payload) {
+  const rowIdx = Number(payload.rowIdx) || 0;
+  const text = String(payload.text || '').trim();
+  if (!rowIdx) return { status: 'error', message: 'no rowIdx' };
+
+  const sheet = getWorkSheet();
+  sheet.getRange(rowIdx, 7).setValue(text);
+
+  return { status: 'success' };
+}
+/* [W06] Save the NOTES column (H) for a specific row. */
+function workNotesSave(payload) {
+  const rowIdx = Number(payload.rowIdx) || 0;
+  const text = String(payload.text || '').trim();
+  if (!rowIdx) return { status: 'error', message: 'no rowIdx' };
+
+  const sheet = getWorkSheet();
+  sheet.getRange(rowIdx, 8).setValue(text);   // column H
+
+  return { status: 'success' };
+}
+/* [W05] Delete an additional report row. */
+/* [W05] Clear the ADDITIONAL REPORT column of a row. */
+function workAdditionalDelete(payload) {
+  const rowIdx = Number(payload.rowIdx) || 0;
+  if (!rowIdx) return { status: 'error', message: 'no rowIdx' };
+
+  const sheet = getWorkSheet();
+  sheet.getRange(rowIdx, 7).setValue('');
+
+  return { status: 'success' };
+}
+/* ═══════════════════════════════════════════════════════════════
+   ONE-TIME RUNNABLES — PASTE YOUR MANUAL FUNCTIONS HERE
+   ═══════════════════════════════════════════════════════════════
+   Add any manual / debug / migration functions below this line.
+   They will NOT be picked up by any trigger. They must be run
+   by hand from the Apps Script editor dropdown.
+
+   Suggested templates you can paste in:
+
+   • setupAllTriggers           — installs all time-based triggers
+   • ensureTodayTrackerColumn   — creates today's column in MASTER TRACKER
+   • backfillAbandonedDaysFood  — for missing abandoned-day food entries
+   • dedupeAllSheets            — removes duplicate rows by date
+   • migrateWatchColumns        — adds watch columns M-P to HEALTH_HABITS
+                                  and column H to NUTRITION_SUMMARY
+   • fixAllTrackerHeaders       — normalizes date headers in MASTER TRACKER
+   • deleteEntriesForDate       — wipes a specific day's data
+   • verifyRoutineEvents        — checks Google Calendar for upcoming events
+   • DEBUG_*                    — anything for troubleshooting
+
+   Keep this section for MANUAL USE ONLY. Do not call these from
+   doPost or any trigger.
+   ═══════════════════════════════════════════════════════════════ */
+
+// ↓↓↓ PASTE ONE-TIME FUNCTIONS BELOW ↓↓↓
+/* ─── Trivial triggers setup ─── */
+function MIGRATE_notesAddOffice() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('EVERYDAY_NOTES');
+  if (!sheet) { Logger.log('No EVERYDAY_NOTES sheet'); return; }
+
+  const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  Logger.log('Current header: ' + JSON.stringify(header));
+
+  if (String(header[5] || '').trim() === 'Office') {
+    Logger.log('Already migrated');
+    return;
+  }
+
+  // Old layout: [Date, Positive, Improve, Common, Learned, SavedAt]
+  // New layout: [Date, Positive, Improve, Common, Learned, Office, SavedAt]
+  if (String(header[5] || '').trim() === 'SavedAt') {
+    sheet.insertColumnBefore(6);
+    sheet.getRange(1, 6).setValue('Office');
+    sheet.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+    Logger.log('✅ Migrated — column F is now Office');
+  } else {
+    // Something else is at column F — just relabel it
+    sheet.getRange(1, 6).setValue('Office');
+    sheet.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+    Logger.log('⚠️ Column F relabeled — verify manually');
+  }
+}
+function VERIFY_workSheetHeader() {
+  const sheet = getWorkSheet();
+  const hdr = sheet.getRange(1, 1, 1, 8).getValues()[0];
+  Logger.log('Header row: ' + JSON.stringify(hdr));
+
+  const expected = ['Date','DAY','Planned Report','Planned Occurrence',
+                    'Actual Report','Actual Occurrence','ADDITIONAL REPORT','Skip'];
+  let ok = true;
+  for (let i = 0; i < 8; i++) {
+    const actual = String(hdr[i] || '').trim();
+    if (actual !== expected[i]) {
+      Logger.log('❌ Col ' + (i+1) + ': expected "' + expected[i] + '", found "' + actual + '"');
+      ok = false;
+    }
+  }
+  if (ok) Logger.log('✅ Header matches expected layout');
+}
+function DIAGNOSE_workPlanLoad() {
+  Logger.log('═══ 1) Does the sheet exist? ═══');
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('WORK PLAN VS ACTUAL');
+  if (!sheet) {
+    Logger.log('❌ SHEET MISSING — named "WORK PLAN VS ACTUAL" not found');
+    ss.getSheets().forEach(function(s) {
+      Logger.log('   existing sheet: "' + s.getName() + '"');
+    });
+    return;
+  }
+  Logger.log('✅ Sheet found');
+
+  Logger.log('');
+  Logger.log('═══ 2) Header row ═══');
+  const hdr = sheet.getRange(1, 1, 1, Math.max(8, sheet.getLastColumn())).getValues()[0];
+  Logger.log(JSON.stringify(hdr));
+
+  Logger.log('');
+  Logger.log('═══ 3) Total rows ═══');
+  Logger.log('lastRow = ' + sheet.getLastRow() + ', lastCol = ' + sheet.getLastColumn());
+
+  Logger.log('');
+  Logger.log('═══ 4) First data row (row 2) ═══');
+  if (sheet.getLastRow() >= 2) {
+    const r2 = sheet.getRange(2, 1, 1, 8).getValues()[0];
+    Logger.log(JSON.stringify(r2));
+    Logger.log('  A type: ' + typeof r2[0] + ' | value: ' + r2[0]);
+  }
+
+  Logger.log('');
+  Logger.log('═══ 5) Simulate workPlanLoad(2026, 9)  ← October ═══');
+  try {
+    const res = workPlanLoad(2026, 9);
+    Logger.log('status: ' + res.status);
+    Logger.log('rows.length: ' + (res.rows ? res.rows.length : 'N/A'));
+    if (res.rows && res.rows.length) {
+      Logger.log('first row: ' + JSON.stringify(res.rows[0]));
+      Logger.log('last row: ' + JSON.stringify(res.rows[res.rows.length - 1]));
+    }
+    Logger.log('dropdown.length: ' + (res.dropdown ? res.dropdown.length : 'N/A'));
+  } catch (e) {
+    Logger.log('❌ EXCEPTION: ' + e);
+    Logger.log('   Stack: ' + e.stack);
+  }
+
+  Logger.log('');
+  Logger.log('═══ 6) Simulate what the frontend sends ═══');
+  Logger.log('new Date().getMonth() = ' + new Date().getMonth() + '  (9 = October)');
+  Logger.log('new Date().getFullYear() = ' + new Date().getFullYear());
+}
+function DIAGNOSE_october_workPlan() {
+  Logger.log('═══ RAW SHEET DUMP — October 2026 rows ═══');
+  const sheet = getWorkSheet();
+  const data = sheet.getDataRange().getValues();
+  Logger.log('Total rows: ' + data.length);
+  Logger.log('Header: ' + JSON.stringify(data[0]));
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun',
+                  'Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  let octCount = 0;
+  for (let i = 1; i < data.length; i++) {
+    const d = data[i][0];
+    if (!d) continue;
+
+    let dmy = '';
+    if (d instanceof Date) dmy = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    else dmy = String(d).trim();
+
+    // Show the first 5 raw values
+    if (octCount < 5) {
+      Logger.log('Row ' + (i+1) + ' raw: ' + JSON.stringify(data[i].slice(0, 8)));
+    }
+
+    let m = dmy.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+    let day, mon, yr;
+    if (m) { day = parseInt(m[1],10); mon = m[2]; yr = parseInt(m[3],10); }
+    else {
+      m = dmy.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
+      if (!m) {
+        if (octCount < 5) Logger.log('  ❌ Regex did not match: "' + dmy + '"');
+        continue;
+      }
+      day = parseInt(m[1],10); mon = m[2]; yr = 2000 + parseInt(m[3],10);
+    }
+
+    if (mon === 'Oct' && yr === 2026) {
+      octCount++;
+      if (octCount <= 3) {
+        Logger.log('  ✅ MATCH: day=' + day + ' mon=' + mon + ' yr=' + yr);
+      }
+    }
+  }
+  Logger.log('October 2026 matches: ' + octCount);
+
+  Logger.log('');
+  Logger.log('═══ workPlanLoad(2026, 9) OUTPUT ═══');
+  const res = workPlanLoad(2026, 9);
+  Logger.log('status: ' + res.status);
+  Logger.log('year: ' + res.year);
+  Logger.log('month: ' + res.month);
+  Logger.log('rows.length: ' + res.rows.length);
+  if (res.rows.length > 0) {
+    Logger.log('First row:');
+    Logger.log(JSON.stringify(res.rows[0]));
+    Logger.log('Last row:');
+    Logger.log(JSON.stringify(res.rows[res.rows.length - 1]));
+  }
+
+  Logger.log('');
+  Logger.log('═══ workPlanLoad(2026, 8) — September ═══');
+  const sep = workPlanLoad(2026, 8);
+  Logger.log('rows.length: ' + sep.rows.length);
+}
+function TEST_doPost_routing() {
+  const fakeEvent = {
+    postData: {
+      contents: JSON.stringify({
+        action: 'work-plan-load',
+        data: { year: 2026, month: 9 }
+      })
+    }
+  };
+  const result = doPost(fakeEvent);
+  Logger.log('Content: ' + result.getContent());
+}
