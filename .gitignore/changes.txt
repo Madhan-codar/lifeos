@@ -1,73 +1,748 @@
 === BEGIN CHANGES ===
-FILE: index.html
+FILE: Code.js
 FIND:
-    if (Array.isArray(res.notesHistory) && res.notesHistory.length) {
-  // Merge server history with local edits (local wins for status/editedAt)
-    const local = state.notesHistory || [];
-    const byDate = {};
-    res.notesHistory.forEach(d => byDate[d.date] = d);
-    local.forEach(d => {
-      if (byDate[d.date]) {
-        // Merge each field's items by id
-        ['positive','improve','common'].forEach(k => {
-          const srv = byDate[d.date][k] || [];
-          const loc = d[k] || [];
-          const merged = srv.map(si => {
-            const li = loc.find(x => x.id === si.id);
-            if (li && li.editedAt && (!si.editedAt || li.editedAt > si.editedAt)) {
-              return Object.assign({}, si, { status: li.status, editedAt: li.editedAt });
-            }
-            return si;
-          });
-          byDate[d.date][k] = merged;
-        });
-      } else {
-        byDate[d.date] = d;
+/* ═══════════════════════════════════════════════════════════════
+   SECTION N — COUNTDOWNS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [60] */ function getCountdownsSheet() {
+
+REPLACE:
+/* ═══════════════════════════════════════════════════════════════
+   SECTION N0 — 5-SLOT REMINDER SCHEDULE (shared)
+   Every item — reminder, birthday, anniversary, countdown —
+   gets 5 Google Calendar events:
+     1) 2 days before  @ 09.15 – 09.20
+     2) 1 day  before  @ 09.15 – 09.20
+     3) event day      @ 07.05 – 07.10
+     4) event day      @ 10.15 – 10.20
+     5) event day      @ 15.15 – 15.20
+   Each event has a 2-min-before popup. Past slots are auto-deleted
+   by cleanAllPastEvents() (15-min trigger).
+   ═══════════════════════════════════════════════════════════════ */
+
+const SLOT_DEFS = [
+  { n: 1, offsetDays: -2, start: '09.15', end: '09.20', label: '2 days before' },
+  { n: 2, offsetDays: -1, start: '09.15', end: '09.20', label: '1 day before'  },
+  { n: 3, offsetDays:  0, start: '07.05', end: '07.10', label: 'Morning'       },
+  { n: 4, offsetDays:  0, start: '10.15', end: '10.20', label: 'Late morning'  },
+  { n: 5, offsetDays:  0, start: '15.15', end: '15.20', label: 'Afternoon'     }
+];
+
+/* Parse "09.15" → {h:9, m:15} */
+function parseDotTime(s) {
+  const p = String(s || '').split('.');
+  return { h: parseInt(p[0], 10) || 0, m: parseInt(p[1] || '0', 10) || 0 };
+}
+
+/* Build a Date for (baseY, baseM0, baseD) + offsetDays at HH.MM */
+function slotDate(baseY, baseM0, baseD, offsetDays, dotTime) {
+  const t = parseDotTime(dotTime);
+  return new Date(baseY, baseM0, baseD + offsetDays, t.h, t.m, 0, 0);
+}
+
+/* Get or create the primary LifeOS calendar */
+function getOrCreateLifeOSCalendar() {
+  const named = CalendarApp.getCalendarsByName('LifeOS');
+  if (named && named.length) return named[0];
+  try {
+    return CalendarApp.createCalendar('LifeOS', {
+      summary: 'LifeOS reminders',
+      timeZone: Session.getScriptTimeZone()
+    });
+  } catch (e) {
+    return CalendarApp.getDefaultCalendar();
+  }
+}
+
+/* Title prefix by item kind */
+function slotEmoji(kind) {
+  if (kind === 'birthday')    return '🎂';
+  if (kind === 'anniversary') return '💍';
+  if (kind === 'countdown')   return '🔥';
+  return '🔔';
+}
+
+/* Compose event title for a slot */
+function slotTitle(kind, title, slot) {
+  const em = slotEmoji(kind);
+  return em + ' ' + slot.label + ': ' + title;
+}
+
+/* Delete events matching this title in the window [from, to] on the given calendar. */
+function deleteEventsByTitle(cal, title, from, to) {
+  let n = 0;
+  try {
+    const evs = cal.getEvents(from, to);
+    evs.forEach(function (ev) {
+      if (ev.getTitle() === title) {
+        try { ev.deleteEvent(); n++; } catch (_) {}
       }
     });
-    state.notesHistory = Object.values(byDate).sort((a,b) => (b.date||'').localeCompare(a.date||''));
-    NotesTab.saveHist();
+  } catch (_) {}
+  return n;
+}
+
+/* Core: ensure the 5 slots exist for one item.
+   item = { kind, title, dateY, dateM0, dateD, notes, sourceId } */
+function ensureFiveSlots(item) {
+  const cal = getOrCreateLifeOSCalendar();
+  const y = item.dateY, m0 = item.dateM0, d = item.dateD;
+  const created = [];
+  const skipped = [];
+
+  SLOT_DEFS.forEach(function (slot) {
+    const start = slotDate(y, m0, d, slot.offsetDays, slot.start);
+    const end   = slotDate(y, m0, d, slot.offsetDays, slot.end);
+    const title = slotTitle(item.kind, item.title, slot);
+
+    // Skip if it's in the past
+    if (end.getTime() < Date.now()) { skipped.push(slot.n); return; }
+
+    // Dedupe window: ±1 hour around start
+    const from = new Date(start.getTime() - 3600000);
+    const to   = new Date(end.getTime()   + 3600000);
+    let exists = false;
+    try {
+      const evs = cal.getEvents(from, to);
+      for (let i = 0; i < evs.length; i++) {
+        if (evs[i].getTitle() === title) {
+          const s = evs[i].getStartTime().getTime();
+          if (Math.abs(s - start.getTime()) < 60000) { exists = true; break; }
+        }
+      }
+    } catch (_) {}
+
+    if (exists) { skipped.push(slot.n); return; }
+
+    try {
+      const ev = cal.createEvent(title, start, end, {
+        description: item.notes || ('Auto reminder · ' + item.kind)
+      });
+      try { ev.removeAllReminders(); } catch (_) {}
+      try { ev.addPopupReminder(2); } catch (_) {}
+      created.push(slot.n);
+    } catch (err) {
+      Logger.log('ensureFiveSlots create fail ' + title + ' → ' + err);
+    }
+  });
+
+  return { created: created, skipped: skipped };
+}
+
+/* Delete all 5 slots for one item */
+function deleteFiveSlots(kind, title, y, m0, d) {
+  const cal = getOrCreateLifeOSCalendar();
+  let removed = 0;
+  SLOT_DEFS.forEach(function (slot) {
+    const start = slotDate(y, m0, d, slot.offsetDays, slot.start);
+    const end   = slotDate(y, m0, d, slot.offsetDays, slot.end);
+    const titleStr = slotTitle(kind, title, slot);
+    const from = new Date(start.getTime() - 3600000);
+    const to   = new Date(end.getTime()   + 3600000);
+    removed += deleteEventsByTitle(cal, titleStr, from, to);
+  });
+  return removed;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTION N — COUNTDOWNS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* [60] */ function getCountdownsSheet() {
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: Code.js
+FIND:
+/* [67] */ function reminderTitleFor(slot, countdownTitle) {
+  if (slot === 1) return '⏰ Tomorrow is deadline: ' + countdownTitle;
+  if (slot === 2) return '🔔 Deadline today: ' + countdownTitle;
+  return '🔥 Deadline today (final): ' + countdownTitle;
+}
+
+/* [68] */ function countdownSyncAllReminders() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const cdSheet = ss.getSheetByName('COUNTDOWNS');
+  if (!cdSheet) return { status: 'error', message: 'no countdowns sheet' };
+
+  const cdData = cdSheet.getDataRange().getValues();
+  const countdowns = [];
+  for (let i = 1; i < cdData.length; i++) {
+    const id = cdData[i][0];
+    if (!id) continue;
+    const title = String(cdData[i][2] || '').trim();
+    const deadline = cdData[i][3];
+    if (!title || !deadline) continue;
+    countdowns.push({ id: String(id), title: title, deadline: deadline });
+  }
+
+  let calSheet = ss.getSheetByName('CALENDAR_ITEMS');
+  if (!calSheet) {
+    calSheet = ss.insertSheet('CALENDAR_ITEMS');
+    calSheet.appendRow(['ID','Type','Date','Time','Month','Day','Title','Notes',
+                        'RemindMin','Status','LastYear','EventId','UpdatedAt']);
+    calSheet.getRange(1,1,1,13).setFontWeight('bold').setBackground('#1e293b').setFontColor('#ffffff');
+  }
+
+  const calData = calSheet.getDataRange().getValues();
+  const existingRowsById = {};
+  for (let i = 1; i < calData.length; i++) {
+    const id = String(calData[i][0] || '').trim();
+    if (id) existingRowsById[id] = i + 1;
+  }
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const expected = {};
+  const toCreate = [];
+
+  countdowns.forEach(function (cd) {
+    const parsed = parseCountdownDMY(cd.deadline);
+    if (!parsed) return;
+    const y = parsed.y, m0 = parsed.m0, d = parsed.d;
+
+    const slots = [
+      { n: 1, date: new Date(y, m0, d - 1), hhmm: '21.00' },
+      { n: 2, date: new Date(y, m0, d),     hhmm: '08.00' },
+      { n: 3, date: new Date(y, m0, d),     hhmm: '09.00' }
+    ];
+
+    slots.forEach(function (sl) {
+      const dd = String(sl.date.getDate()).padStart(2,'0');
+      const mm = MONTHS[sl.date.getMonth()];
+      const yy = sl.date.getFullYear();
+      const dmy = dd + '-' + mm + '-' + yy;
+
+      const id = reminderIdFor(cd.id, sl.n);
+      const title = reminderTitleFor(sl.n, cd.title);
+
+      expected[id] = true;
+      toCreate.push({
+        id: id,
+        dmy: dmy,
+        hhmm: sl.hhmm,
+        title: title,
+        notes: 'Auto reminder · countdown: ' + cd.title,
+        when: new Date(
+          sl.date.getFullYear(),
+          sl.date.getMonth(),
+          sl.date.getDate(),
+          parseInt(sl.hhmm.split('.')[0], 10),
+          parseInt(sl.hhmm.split('.')[1], 10),
+          0
+        )
+      });
+    });
+  });
+
+  const nowIso = new Date().toISOString();
+  const newRows = [];
+  let updated = 0;
+  toCreate.forEach(function (item) {
+    const rowVals = [
+      item.id, 'reminder', "'" + item.dmy, item.hhmm,
+      '', '', item.title, item.notes,
+      15, '', 0, '', nowIso
+    ];
+    if (existingRowsById[item.id]) {
+      const sheetRow = existingRowsById[item.id];
+      calSheet.getRange(sheetRow, 3).setValue("'" + item.dmy);
+      calSheet.getRange(sheetRow, 4).setValue(item.hhmm);
+      calSheet.getRange(sheetRow, 7).setValue(item.title);
+      calSheet.getRange(sheetRow, 8).setValue(item.notes);
+      calSheet.getRange(sheetRow, 13).setValue(nowIso);
+      updated++;
+    } else {
+      newRows.push(rowVals);
+    }
+  });
+  if (newRows.length) {
+    const startRow = calSheet.getLastRow() + 1;
+    calSheet.getRange(startRow, 1, newRows.length, newRows[0].length).setValues(newRows);
+  }
+
+  let removedRows = 0;
+  const freshCalData = calSheet.getDataRange().getValues();
+  for (let i = freshCalData.length - 1; i >= 1; i--) {
+    const id = String(freshCalData[i][0] || '');
+    if (id.indexOf('cdrem_') !== 0) continue;
+    if (!expected[id]) { calSheet.deleteRow(i + 1); removedRows++; }
+  }
+
+  let cal;
+  const named = CalendarApp.getCalendarsByName('LifeOS');
+  if (named && named.length) cal = named[0];
+  else {
+    try {
+      cal = CalendarApp.createCalendar('LifeOS', {
+        summary: 'LifeOS reminders',
+        timeZone: Session.getScriptTimeZone()
+      });
+    } catch (e) {
+      cal = CalendarApp.getDefaultCalendar();
+    }
+  }
+
+  const now = new Date();
+  const horizonStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
+  const horizonEnd   = new Date(now.getFullYear(), now.getMonth() + 6, 0);
+  const existingEvents = cal.getEvents(horizonStart, horizonEnd);
+
+  const eventIndex = {};
+  existingEvents.forEach(function (ev) {
+    eventIndex[ev.getTitle() + '|' + ev.getStartTime().getTime()] = ev;
+  });
+
+  const expectedEventKeys = {};
+  let created = 0, skipped = 0, deletedEvents = 0;
+
+  toCreate.forEach(function (item) {
+    const key = item.title + '|' + item.when.getTime();
+    expectedEventKeys[key] = true;
+    if (eventIndex[key]) { skipped++; return; }
+    try {
+      const end = new Date(item.when.getTime() + 30 * 60 * 1000);
+      const ev = cal.createEvent(item.title, item.when, end);
+      try { ev.removeAllReminders(); } catch (_) {}
+      try { ev.addPopupReminder(5); } catch (_) {}
+      try { ev.setDescription(item.notes); } catch (_) {}
+      created++;
+    } catch (err) {
+      Logger.log('Event create failed: ' + item.title + ' → ' + err.message);
+    }
+  });
+
+  existingEvents.forEach(function (ev) {
+    const t = ev.getTitle();
+    const isOurs = /^(⏰ Tomorrow is deadline:|🔔 Deadline today:|🔥 Deadline today \(final\):)/.test(t);
+    if (!isOurs) return;
+    const key = t + '|' + ev.getStartTime().getTime();
+    if (!expectedEventKeys[key]) {
+      try { ev.deleteEvent(); deletedEvents++; } catch (_) {}
+    }
+  });
+
+  return {
+    status: 'success',
+    countdowns: countdowns.length,
+    remindersExpected: toCreate.length,
+    rowsAdded: newRows.length,
+    rowsUpdated: updated,
+    rowsRemoved: removedRows,
+    eventsCreated: created,
+    eventsSkipped: skipped,
+    eventsDeleted: deletedEvents,
+    calendar: cal.getName()
+  };
+}
+
+REPLACE:
+/* Legacy helper — kept for compatibility, no longer used by sync */
+function reminderTitleFor(slot, countdownTitle) {
+  if (slot === 1) return '⏰ Tomorrow is deadline: ' + countdownTitle;
+  if (slot === 2) return '🔔 Deadline today: ' + countdownTitle;
+  return '🔥 Deadline today (final): ' + countdownTitle;
+}
+
+/* Delete any legacy 3-slot countdown events (old titles) */
+function purgeLegacyCountdownEvents() {
+  const cal = getOrCreateLifeOSCalendar();
+  const now = new Date();
+  const from = new Date(now.getFullYear() - 1, 0, 1);
+  const to   = new Date(now.getFullYear() + 2, 0, 1);
+  const prefixes = [
+    '⏰ Tomorrow is deadline:',
+    '🔔 Deadline today:',
+    '🔥 Deadline today (final):'
+  ];
+  let deleted = 0;
+  try {
+    const evs = cal.getEvents(from, to);
+    evs.forEach(function (ev) {
+      const t = ev.getTitle();
+      for (let i = 0; i < prefixes.length; i++) {
+        if (t.indexOf(prefixes[i]) === 0) {
+          try { ev.deleteEvent(); deleted++; } catch (_) {}
+          break;
+        }
+      }
+    });
+  } catch (e) { Logger.log('purgeLegacy: ' + e); }
+  return deleted;
+}
+
+/* [68] countdownSyncAllReminders — NEW 5-slot version */
+function countdownSyncAllReminders() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const cdSheet = ss.getSheetByName('COUNTDOWNS');
+  if (!cdSheet) return { status: 'error', message: 'no countdowns sheet' };
+
+  // One-time purge of old 3-slot titles
+  try { purgeLegacyCountdownEvents(); } catch (_) {}
+
+  const cdData = cdSheet.getDataRange().getValues();
+  const countdowns = [];
+  for (let i = 1; i < cdData.length; i++) {
+    const id = cdData[i][0];
+    if (!id) continue;
+    const title = String(cdData[i][2] || '').trim();
+    const deadline = cdData[i][3];
+    if (!title || !deadline) continue;
+    countdowns.push({ id: String(id), title: title, deadline: deadline });
+  }
+
+  // Build list of expected slot-titles for all countdowns
+  const allCountdownTitles = {};
+  const createdIds = [];
+  let totalCreated = 0, totalSkipped = 0;
+
+  countdowns.forEach(function (cd) {
+    const parsed = parseCountdownDMY(cd.deadline);
+    if (!parsed) return;
+    allCountdownTitles[cd.title] = true;
+    const r = ensureFiveSlots({
+      kind: 'countdown',
+      title: cd.title,
+      dateY: parsed.y, dateM0: parsed.m0, dateD: parsed.d,
+      notes: 'Auto reminder · countdown: ' + cd.title
+    });
+    totalCreated += (r.created || []).length;
+    totalSkipped += (r.skipped || []).length;
+  });
+
+  // Clean stale countdown slots: any event with 🔥 prefix whose title isn't in allCountdownTitles
+  const cal = getOrCreateLifeOSCalendar();
+  const now = new Date();
+  const from = new Date(now.getFullYear() - 1, 0, 1);
+  const to   = new Date(now.getFullYear() + 2, 0, 1);
+  let deletedEvents = 0;
+  try {
+    const evs = cal.getEvents(from, to);
+    evs.forEach(function (ev) {
+      const t = ev.getTitle();
+      if (t.indexOf('🔥 ') !== 0) return;
+      // extract countdown title from "🔥 <label>: <title>"
+      const idx = t.indexOf(': ');
+      if (idx === -1) return;
+      const ct = t.slice(idx + 2).trim();
+      if (!allCountdownTitles[ct]) {
+        try { ev.deleteEvent(); deletedEvents++; } catch (_) {}
+      }
+    });
+  } catch (_) {}
+
+  return {
+    status: 'success',
+    countdowns: countdowns.length,
+    eventsCreated: totalCreated,
+    eventsSkipped: totalSkipped,
+    eventsDeleted: deletedEvents
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   WISHES / REMINDERS — 5-slot sync
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Sync all CALENDAR_ITEMS rows through ensureFiveSlots */
+function calendarItemsSyncAllReminders() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('CALENDAR_ITEMS');
+  if (!sheet) return { status: 'error', message: 'no CALENDAR_ITEMS' };
+
+  const data = sheet.getDataRange().getValues();
+  let totalCreated = 0, totalSkipped = 0;
+  const expected = {};
+
+  for (let i = 1; i < data.length; i++) {
+    const id    = String(data[i][0] || '').trim();
+    if (!id) continue;
+    if (id.indexOf('cdrem_') === 0) continue; // skip countdown row-artifacts
+
+    const type  = String(data[i][1] || 'reminder').trim();
+    let   dateV = data[i][2];
+    const month = Number(data[i][4]) || 0;
+    const day   = Number(data[i][5]) || 0;
+    const title = String(data[i][6] || '').trim();
+    const notes = String(data[i][7] || '').trim();
+    if (!title) continue;
+
+    let y, m0, d;
+
+    if (type === 'reminder') {
+      const parsed = parseCountdownDMY(dateV);
+      if (!parsed) continue;
+      y = parsed.y; m0 = parsed.m0; d = parsed.d;
+    } else {
+      // birthday / anniversary → use this year's occurrence (or next year's if already past)
+      if (!month || !day) continue;
+      m0 = month - 1;
+      d  = day;
+      const now = new Date();
+      y = now.getFullYear();
+      // If this year's date already fully passed, roll to next year
+      const thisYearDate = new Date(y, m0, d);
+      const oneDayAfter = new Date(y, m0, d + 1);
+      if (oneDayAfter.getTime() < now.getTime()) {
+        y = y + 1;
+      }
+    }
+
+    const key = type + '|' + title + '|' + y + '-' + (m0 + 1) + '-' + d;
+    expected[key] = true;
+
+    const r = ensureFiveSlots({
+      kind: type,
+      title: title,
+      dateY: y, dateM0: m0, dateD: d,
+      notes: notes || ('Auto reminder · ' + type)
+    });
+    totalCreated += (r.created || []).length;
+    totalSkipped += (r.skipped || []).length;
+  }
+
+  // Clean stale wish/reminder slots: any event whose emoji prefix says
+  // it's ours, but whose (kind,title,date) is no longer expected.
+  const cal = getOrCreateLifeOSCalendar();
+  const now = new Date();
+  const from = new Date(now.getFullYear() - 1, 0, 1);
+  const to   = new Date(now.getFullYear() + 3, 0, 1);
+  const prefixes = ['🔔 ', '🎂 ', '💍 '];
+  const slotLabels = SLOT_DEFS.map(function (s) { return s.label; });
+
+  let deletedEvents = 0;
+  try {
+    const evs = cal.getEvents(from, to);
+    evs.forEach(function (ev) {
+      const t = ev.getTitle();
+      let matchedPrefix = null;
+      for (let i = 0; i < prefixes.length; i++) {
+        if (t.indexOf(prefixes[i]) === 0) { matchedPrefix = prefixes[i]; break; }
+      }
+      if (!matchedPrefix) return;
+
+      // Format: "<emoji> <label>: <title>"
+      const afterEmoji = t.slice(matchedPrefix.length);
+      const colonIdx = afterEmoji.indexOf(': ');
+      if (colonIdx === -1) return;
+      const label = afterEmoji.slice(0, colonIdx).trim();
+      const titleStr = afterEmoji.slice(colonIdx + 2).trim();
+      if (slotLabels.indexOf(label) === -1) return;
+
+      const kind = matchedPrefix === '🎂 ' ? 'birthday'
+                 : matchedPrefix === '💍 ' ? 'anniversary'
+                 : 'reminder';
+
+      // Was it in our expected set? We keyed by year, but the event itself
+      // carries a specific date — reconstruct the y-m-d from event start.
+      const st = ev.getStartTime();
+      const ymd = st.getFullYear() + '-' + (st.getMonth() + 1) + '-' + st.getDate();
+      // Find whether any expected key matches this title + approximate year
+      // (year-of-event may differ from year-of-event-date by up to 2 days
+      //  because slot 1 fires 2 days earlier; allow both).
+      const evY = st.getFullYear();
+      let found = false;
+      for (let yy = evY - 1; yy <= evY + 1 && !found; yy++) {
+        const k = kind + '|' + titleStr + '|' + yy + '-' + (m0FromEvent(st) + 1) + '-' + dFromEvent(st);
+        if (expected[k]) { found = true; break; }
+      }
+      // Simpler fallback: check any key with this exact kind + title
+      if (!found) {
+        for (const k in expected) {
+          if (k.indexOf(kind + '|' + titleStr + '|') === 0) { found = true; break; }
+        }
+      }
+
+      if (!found) {
+        try { ev.deleteEvent(); deletedEvents++; } catch (_) {}
+      }
+    });
+  } catch (e) { Logger.log('wish cleanup: ' + e); }
+
+  return {
+    status: 'success',
+    eventsCreated: totalCreated,
+    eventsSkipped: totalSkipped,
+    eventsDeleted: deletedEvents
+  };
+}
+
+function m0FromEvent(d) { return d.getMonth(); }
+function dFromEvent(d)  { return d.getDate(); }
+
+/* One button: sync everything (countdowns + calendar items) */
+function reminderSyncAll() {
+  const a = countdownSyncAllReminders();
+  const b = calendarItemsSyncAllReminders();
+  const result = {
+    status: 'success',
+    countdowns: a,
+    calendarItems: b
+  };
+  Logger.log('reminderSyncAll: ' + JSON.stringify(result));
+  return result;
+}
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: Code.js
+FIND:
+/* [59] */ function remSyncAllToCalendar() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('CALENDAR_ITEMS');
+  if (!sheet) return { status: 'error', message: 'no sheet' };
+
+  const data = sheet.getDataRange().getValues();
+  let created = 0, updated = 0, skipped = 0, failed = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    const id = data[i][0];
+    if (!id) continue;
+    if (String(id).indexOf('cdrem_') === 0) continue;
+
+    const it = {
+      id: id,
+      type: data[i][1] || 'reminder',
+      date: normalizeDateForOutput(data[i][2]),
+      time: data[i][3],
+      month: data[i][4],
+      day: data[i][5],
+      title: data[i][6] || '',
+      notes: data[i][7] || '',
+      remindMin: data[i][8] || 15
+    };
+    const existingEventId = data[i][11] || '';
+
+    if (existingEventId) {
+      try {
+        const cals = CalendarApp.getCalendarsByName('LifeOS')
+          .concat(CalendarApp.getCalendarsByName('LifeOS Wishes'));
+        let exists = false, oldEv = null;
+        for (let c = 0; c < cals.length; c++) {
+          const ev = cals[c].getEventById(existingEventId);
+          if (ev) { exists = true; oldEv = ev; break; }
+        }
+        if (exists && oldEv) {
+          const wantTitle = (it.type === 'birthday' ? '🎂 ' :
+                             it.type === 'anniversary' ? '💍 ' : '🔔 ') + (it.title || '');
+          if (oldEv.getTitle() === wantTitle) { skipped++; continue; }
+          const newId = updateEventForReminder(existingEventId, it);
+          if (newId) { sheet.getRange(i + 1, 12).setValue(newId); updated++; }
+          continue;
+        }
+      } catch (_) {}
+    }
+
+    if (it.type === 'reminder' && it.date && it.time) {
+      if (isInSkipWindow(it.date, it.time)) {
+        if (existingEventId) {
+          try {
+            const cals = CalendarApp.getCalendarsByName('LifeOS');
+            for (let c = 0; c < cals.length; c++) {
+              const ev = cals[c].getEventById(existingEventId);
+              if (ev) { ev.deleteEvent(); break; }
+            }
+            sheet.getRange(i + 1, 12).setValue('');
+          } catch (_) {}
+        }
+        skipped++;
+        continue;
+      }
+    }
+    const newId = createEventForReminder(it);
+    if (newId) {
+      sheet.getRange(i + 1, 12).setValue(newId);
+      if (existingEventId) updated++; else created++;
+    } else failed++;
+  }
+
+  const result = { status: 'success', created, updated, skipped, failed };
+  Logger.log('remSyncAllToCalendar: ' + JSON.stringify(result));
+  return result;
+}
+
+REPLACE:
+/* [59] remSyncAllToCalendar — now delegates to the 5-slot engine */
+function remSyncAllToCalendar() {
+  try {
+    return reminderSyncAll();
+  } catch (e) {
+    Logger.log('remSyncAllToCalendar error: ' + e);
+    return { status: 'error', message: String(e) };
+  }
+}
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: Code.js
+FIND:
+      case 'countdown-reminders': res = countdownCreateReminders(data); break;
+      case 'countdown-delete':    res = countdownDelete(data.id); break;
+      case 'countdown-status':    res = countdownStatus(data.id, data.status); break;
+
+REPLACE:
+      case 'countdown-reminders': res = countdownCreateReminders(data); break;
+      case 'countdown-delete':    res = countdownDelete(data.id); break;
+      case 'countdown-status':    res = countdownStatus(data.id, data.status); break;
+      case 'reminder-sync-all':   res = reminderSyncAll(); break;
+      case 'five-slot-backfill':  res = reminderSyncAll(); break;
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+    // Save everything to localStorage — no server call
+  try {
+    Store.saveDraft();
+    CloudSave.schedule('food', () => ({ entries: FoodTab.payload() }));
+    Store.saveDraftNotes();
+    CloudSave.schedule('notes', () => ({ notes: NotesTab.payload() }));
+    Store.saveDraftCalendar();
+    CloudSave.schedule('rem', () => ({ items: RemTab.payload() }));
+  } catch (e) {
+    ok = false;
+    console.error('Draft save failed', e);
   }
 
 REPLACE:
-    if (Array.isArray(res.notesHistory) && res.notesHistory.length) {
-      // Server is the source of truth for WHICH dates exist and WHAT items
-      // belong to them. Local cache only contributes per-item status edits
-      // (done/pending/ignored) on items that still exist server-side.
-      const localByDate = {};
-      (state.notesHistory || []).forEach(function(d) {
-        if (d && d.date) localByDate[d.date] = d;
-      });
+    // Save everything to localStorage — no server call
+  try {
+    Store.saveDraft();
+    CloudSave.schedule('food', () => ({ entries: FoodTab.payload() }));
+    Store.saveDraftNotes();
+    CloudSave.schedule('notes', () => ({ notes: NotesTab.payload() }));
+    Store.saveDraftCalendar();
+    CloudSave.schedule('rem', () => ({ items: RemTab.payload() }));
+  } catch (e) {
+    ok = false;
+    console.error('Draft save failed', e);
+  }
+=== END CHANGE ===
 
-      const FIELDS = ['positive','improve','common','learned','office'];
 
-      state.notesHistory = res.notesHistory.map(function(serverDay) {
-        const localDay = localByDate[serverDay.date];
-        if (!localDay) return serverDay;
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+  if (tabKey === 'rem') {
+    await API.post('save-calendar-items', { items: RemTab.payload() });
+    return 'Reminders';
+  }
 
-        FIELDS.forEach(function(f) {
-          const srvItems = serverDay[f] || [];
-          const locItems = localDay[f] || [];
-          serverDay[f] = srvItems.map(function(si) {
-            const li = locItems.find(function(x) { return x.id === si.id; });
-            if (li && li.editedAt && (!si.editedAt || li.editedAt > si.editedAt)) {
-              return Object.assign({}, si, {
-                status:   li.status,
-                editedAt: li.editedAt
-              });
-            }
-            return si;
-          });
-        });
-        return serverDay;
-      });
+REPLACE:
+  if (tabKey === 'rem') {
+    await API.post('save-calendar-items', { items: RemTab.payload() });
+    // Kick off the 5-slot sync so reminders/wishes get their calendar events now
+    try { await API.post('reminder-sync-all', {}); } catch (e) { console.warn('reminder-sync-all failed', e); }
+    return 'Reminders';
+  }
+  if (tabKey === 'countdown') {
+    try { await API.post('reminder-sync-all', {}); } catch (e) { console.warn('reminder-sync-all failed', e); }
+    return 'Countdown';
+  }
 
-      state.notesHistory.sort(function(a, b) {
-        return String(b.date || '').localeCompare(String(a.date || ''));
-      });
-
-      NotesTab.saveHist();
-    } else if (!state.notesHistory) {
-      state.notesHistory = [];
-    }
 === END CHANGE ===

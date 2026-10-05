@@ -6156,7 +6156,13 @@ const NotesTab = {
   /* ─── Past 7 days history (excludes today) ─── */
   renderHist() {
     const body = document.getElementById('notesHistBody');
-    const hist = state.notesHistory || [];
+    const hist = (state.notesHistory || []).slice().sort(function(a, b) {
+      // Newest first — compare dd-MMM-yyyy strings by real date
+      const da = parseDMYLocal(a.date);
+      const db = parseDMYLocal(b.date);
+      if (!da || !db) return 0;
+      return db - da;
+    });
     if (!hist.length) {
       body.innerHTML = '<div style="color:var(--dim);font-size:11px;">No history yet.</div>';
       return;
@@ -8973,7 +8979,13 @@ async function submitTab(tabKey) {
   }
   if (tabKey === 'rem') {
     await API.post('save-calendar-items', { items: RemTab.payload() });
+    // Kick off the 5-slot sync so reminders/wishes get their calendar events now
+    try { await API.post('reminder-sync-all', {}); } catch (e) { console.warn('reminder-sync-all failed', e); }
     return 'Reminders';
+  }
+  if (tabKey === 'countdown') {
+    try { await API.post('reminder-sync-all', {}); } catch (e) { console.warn('reminder-sync-all failed', e); }
+    return 'Countdown';
   }
   return 'Unknown';
 }
