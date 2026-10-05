@@ -1254,22 +1254,6 @@ function getWorkSheet() {
   }
   return out;
 }
-function DEBUG_notesHistory() {
-  const hist = getNotesHistory(7);
-  Logger.log('Rows returned: ' + hist.length);
-  hist.forEach(function(d, i) {
-    const counts = {
-      positive: (d.positive || []).length,
-      improve:  (d.improve  || []).length,
-      common:   (d.common   || []).length,
-      learned:  (d.learned  || []).length,
-      office:   (d.office   || []).length
-    };
-    const total = counts.positive + counts.improve + counts.common + counts.learned + counts.office;
-    Logger.log('  [' + i + '] ' + d.date + ' — items: ' + total + '  ' + JSON.stringify(counts));
-  });
-}
-
 
 /* [44] */ function textToItems(text) {
   if (!text) return [];

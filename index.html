@@ -900,7 +900,7 @@ body {
   position:fixed; bottom:90px; left:16px; right:16px;
   background:var(--yes); color:#0f172a; padding:10px;
   border-radius:10px; text-align:center; font-weight:600; font-size:13px;
-  z-index:2000; animation:fadeOut 2s forwards; max-width:480px; margin:0 auto;
+  z-index:2000; animation:fadeOut 8s forwards; max-width:480px; margin:0 auto;
 }
 .toast.err { background:var(--no); color:#fff; }
 .toast.warn { background:var(--gold); color:#0f172a; }
@@ -2030,16 +2030,19 @@ body {
   padding: 5px 10px;
   border-radius: 7px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
   font-family: inherit;
   white-space: nowrap;
   transition: background .15s, border-color .15s, color .15s;
-  border: 1px solid rgba(251,191,36,0.5);
-  background: rgba(251,191,36,0.15);
-  color: #fcd34d;
+  border: 1px solid #facc15;
+  background: #facc15;
+  color: #b91c1c;
   line-height: 1.2;
   flex: 0 0 auto;
+  margin-left: auto;
+  text-transform: uppercase;
+  letter-spacing: .3px;
 }
 .abandon-btn:hover    { background: rgba(251,191,36,0.25); }
 .abandon-btn:active   { transform: scale(.96); }
@@ -2921,6 +2924,129 @@ body {
 .hist-day .hist-group.g-off { border-left-color: #22d3ee; }
 .hist-day .hist-group.g-off .g-lbl { color: #67e8f9; }
 
+/* ═══════════════════════════════════════════════════════════════
+   [CSS-32] TOP PILLS BAR (Notes slides / Countdown / Aims / Rem)
+   ═══════════════════════════════════════════════════════════════ */
+
+.top-pills {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 2px 8px;
+  margin: 0 0 4px 0;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.top-pills::-webkit-scrollbar { display: none; }
+.top-pills:empty { display: none; }
+
+.top-pills .pill {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-radius: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+  user-select: none;
+}
+.top-pills .pill:active { transform: scale(.96); }
+.top-pills .pill.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.top-pills .pill.pill-wrk.active  { background: #22d3ee; color: #0f172a; border-color: #22d3ee; }
+.top-pills .pill.pill-pos.active  { background: #4ade80; color: #0f172a; border-color: #4ade80; }
+.top-pills .pill.pill-imp.active  { background: #f87171; color: #fff;    border-color: #f87171; }
+.top-pills .pill.pill-cmn.active  { background: #60a5fa; color: #0f172a; border-color: #60a5fa; }
+.top-pills .pill.pill-lrn.active  { background: #a78bfa; color: #fff;    border-color: #a78bfa; }
+
+/* ═══════════════════════════════════════════════════════════════
+   [CSS-34] FLASH NEWS TICKER — countdowns + aims scroll
+   ═══════════════════════════════════════════════════════════════ */
+
+.flash-ticker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(90deg, rgba(251,191,36,0.14), rgba(96,165,250,0.10));
+  border: 1px solid rgba(251,191,36,0.35);
+  border-radius: 8px;
+  padding: 5px 8px;
+  margin: 4px 0 2px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fde68a;
+  min-height: 26px;
+  position: relative;
+}
+.flash-ticker .ft-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  animation: ftPulse 1.4s ease-in-out infinite;
+}
+@keyframes ftPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+.flash-ticker .ft-track {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  position: relative;
+  min-width: 0;
+}
+.flash-ticker .ft-item {
+  display: inline-block;
+  padding-right: 40px;
+  color: #fde68a;
+}
+.flash-ticker .ft-item.warn   { color: #fca5a5; }
+.flash-ticker .ft-item.good   { color: #86efac; }
+.flash-ticker .ft-item.accent { color: #93c5fd; }
+
+.flash-ticker .ft-inner {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+.flash-ticker .ft-seg {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   [CSS-33] COUNTDOWN — overdue unmarked state
+   ═══════════════════════════════════════════════════════════════ */
+
+.cd-card.overdue {
+  border-left: 3px solid #f87171;
+  background: rgba(248,113,113,0.08);
+}
+.cd-card.overdue .cd-days-box {
+  background: #f87171;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(248,113,113,0.35);
+  animation: cdPulse 1.6s ease-in-out infinite;
+}
+.cd-card.overdue .cd-days-num,
+.cd-card.overdue .cd-days-lbl { color: #fff; }
+.cd-card.overdue .cd-title-text::before {
+  content: '⚠️ ';
+}
+
+@keyframes cdPulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
+}
 </style>
 </head>
 <body>
@@ -2931,30 +3057,41 @@ body {
 <div class="frozen-stack">
   <div class="hdr">
     <div class="hdr-row1">
-      <h1>TEST test WORKFLOW</h1>
+      <h1>DAILY TRACKER</h1>
       <input type="date" id="datePicker">
       <span class="meta" id="weekBadge"></span>
-      <button id="abandonBtn" class="abandon-btn" type="button">⚠️ Abandon</button>
       <span id="autoSaveBadge"></span>
+      <button id="abandonBtn" class="abandon-btn" type="button">⚠️ Abandon</button>
     </div>
-    <div class="hdr-row2">
+        <div class="hdr-row2">
       <span class="pct" id="progText">0 / 0</span>
       <div class="pbar"><div class="pfill" id="progFill"></div></div>
     </div>
   </div>
 
-  <div class="tabbar">
-    <div class="tab active" data-tab="routine">📋</div>
-    <div class="tab" data-tab="health">💚</div>
-    <div class="tab" data-tab="food">🍽️</div>
-    <div class="tab" data-tab="notes">📝</div>
-    <div class="tab" data-tab="rem">📅</div>
-    <div class="tab" data-tab="countdown">⏳</div>
-    <div class="tab" data-tab="transform">🎯</div>
-    <div class="tab" data-tab="dashboard">📊</div>
+  <!-- ═══ FLASH NEWS TICKER — countdowns + aims ═══ -->
+  <div class="flash-ticker" id="flashTicker">
+    <span class="ft-label">📢</span>
+    <div class="ft-track" id="ftTrack">
+      <span class="ft-item">Loading…</span>
+    </div>
   </div>
 
-  <div class="action-bar">
+  <div class="tabbar">
+        <div class="tab active" data-tab="routine">📋</div>
+        <div class="tab" data-tab="health">💚</div>
+        <div class="tab" data-tab="food">🍽️</div>
+        <div class="tab" data-tab="notes">📝</div>
+        <div class="tab" data-tab="rem">📅</div>
+        <div class="tab" data-tab="countdown">⏳</div>
+        <div class="tab" data-tab="transform">🎯</div>
+        <div class="tab" data-tab="dashboard">📊</div>
+      </div>
+
+      <!-- Top pills: quick jump between sub-views (Notes slides / Countdown / Aims / Rem) -->
+      <div class="top-pills" id="topPills"></div>
+
+      <div class="action-bar">
     <button class="submit-all" id="submitAllBtn">✨ All</button>
     <button class="reset" id="resetBtn">⟳</button>
     <button class="draft" id="draftBtn">💾</button>
@@ -5158,6 +5295,8 @@ const NOTES_SLIDES = [
 
 const NotesTab = {
   ensure() {
+    // eslint-disable-next-line no-unused-expressions
+    void 0;
       if (!state.notes) state.notes = { positive:[], improve:[], common:[], learned:[]};
       NOTES_SLIDES.forEach(s => {
         if (!state.notes[s.key]) state.notes[s.key] = [];
@@ -6288,18 +6427,31 @@ const NotesTab = {
   next() {
     state.notesIndex = (state.notesIndex + 1) % NOTES_SLIDES.length;
     state.workCardIndex = null;
-    state.workData = null;              // ← add
-    state.workViewYear = null;          // ← add
-    state.workViewMonth = null;         // ← add
+    state.workData = null;
+    state.workViewYear = null;
+    state.workViewMonth = null;
     NotesTab.render();
+    TopPills.render();
   },
   prev() {
     state.notesIndex = (state.notesIndex - 1 + NOTES_SLIDES.length) % NOTES_SLIDES.length;
     state.workCardIndex = null;
-    state.workData = null;              // ← add
-    state.workViewYear = null;          // ← add
-    state.workViewMonth = null;         // ← add
+    state.workData = null;
+    state.workViewYear = null;
+    state.workViewMonth = null;
     NotesTab.render();
+    TopPills.render();
+  },
+
+  jumpTo(idx) {
+    if (idx < 0 || idx >= NOTES_SLIDES.length) return;
+    state.notesIndex = idx;
+    state.workCardIndex = null;
+    state.workData = null;
+    state.workViewYear = null;
+    state.workViewMonth = null;
+    NotesTab.render();
+    TopPills.render();
   },
 
   parseTextToItems(text) {
@@ -7509,6 +7661,7 @@ const CountdownTab = {
     }
     CountdownTab.items = res.items || [];
     CountdownTab.renderList();
+    if (typeof TopPills !== 'undefined') TopPills.render();
   },
 
   renderList() {
@@ -7521,26 +7674,45 @@ const CountdownTab = {
     const today = new Date();
     today.setHours(0,0,0,0);
 
-    // Sort: fewest days-left first (most urgent at top).
-    // Past deadlines (negative days) come first — most overdue on top.
+    // Sort priority:
+    //   1. Overdue + unmarked (status !== 'ontrack') → TOP, red, pulsing
+    //   2. Upcoming by days-left ascending (soonest first)
+    //   3. Marked (ontrack / ignore) → BOTTOM
     const sortedItems = CountdownTab.items.slice().sort(function(a, b) {
       const dA = parseDMYLocal(normalizeDeadline(a.deadline));
       const dB = parseDMYLocal(normalizeDeadline(b.deadline));
       const daysA = dA ? Math.ceil((dA - today) / 86400000) : 999999;
       const daysB = dB ? Math.ceil((dB - today) / 86400000) : 999999;
+
+      const isOverdueA = daysA < 0 && a.status !== 'ontrack';
+      const isOverdueB = daysB < 0 && b.status !== 'ontrack';
+
+      // Overdue unmarked → top
+      if (isOverdueA && !isOverdueB) return -1;
+      if (!isOverdueA && isOverdueB) return 1;
+
+      const isMarkedA = a.status === 'ontrack' || a.status === 'ignore';
+      const isMarkedB = b.status === 'ontrack' || b.status === 'ignore';
+
+      // Marked → bottom
+      if (isMarkedA && !isMarkedB) return 1;
+      if (!isMarkedA && isMarkedB) return -1;
+
       return daysA - daysB;
     });
 
     list.innerHTML = sortedItems.map(function(it) {
-      const deadlineDMY = normalizeDeadline(it.deadline);      // ← FIX
-      const dl = parseDMYLocal(deadlineDMY);                    // ← FIX
+      const deadlineDMY = normalizeDeadline(it.deadline);
+      const dl = parseDMYLocal(deadlineDMY);
       const days = dl ? Math.ceil((dl - today) / 86400000) : 0;
       const status = it.status || '';
+      const isOverdue = days < 0 && status !== 'ontrack';
+      const cardCls = isOverdue ? ('overdue ' + status) : status;
       const daysLbl = days > 1 ? 'days left' : days === 1 ? 'day left' : days === 0 ? 'TODAY' : 'days ago';
       const daysVal = days >= 0 ? days : Math.abs(days);
 
       return `
-        <div class="cd-card ${status}" data-id="${escHtml(it.id)}">
+        <div class="cd-card ${cardCls}" data-id="${escHtml(it.id)}">
           <div class="cd-left">
             <div class="cd-title-text">${escHtml(it.title || 'Untitled')}</div>
             <div class="cd-deadline">Deadline: <b>${escHtml(deadlineDMY || '—')}</b></div>
@@ -8449,6 +8621,225 @@ const Abandon = {
    [28] SCRIPT: TABS + EVENT BINDINGS
    ═══════════════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════════════
+   TOP PILLS — sub-view quick-jump bar
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   FLASH NEWS TICKER — pulls countdowns + aims, scrolls them
+   ═══════════════════════════════════════════════════════════════ */
+
+const FlashTicker = {
+  _timer: null,          // data-refresh timer (60s)
+  _raf: null,            // requestAnimationFrame handle
+  _x: 0,                 // current translateX position in px
+  _speed: 0.6,           // px per frame (~36 px/sec at 60fps)
+
+  _start() {
+    const track = document.getElementById('ftTrack');
+    if (!track) return;
+    const inner = track.querySelector('.ft-inner');
+    if (!inner) return;
+
+    FlashTicker._x = 0;
+    inner.style.transform = 'translateX(0)';
+
+    // Measure ONE segment's width. That's the exact loop length.
+    const seg = inner.querySelector('.ft-seg');
+    if (!seg) return;
+    const halfWidth = seg.offsetWidth;
+    if (halfWidth <= 0) return;
+
+    let paused = false;
+    track.addEventListener('touchstart', function() { paused = true; }, { passive: true });
+    track.addEventListener('touchend',   function() { paused = false; }, { passive: true });
+
+    const step = function() {
+      if (!paused) {
+        FlashTicker._x -= FlashTicker._speed;
+        if (FlashTicker._x <= -halfWidth) {
+          FlashTicker._x += halfWidth;   // wrap seamlessly
+        }
+        inner.style.transform = 'translateX(' + FlashTicker._x + 'px)';
+      }
+      FlashTicker._raf = requestAnimationFrame(step);
+    };
+
+    FlashTicker._raf = requestAnimationFrame(step);
+  },
+
+  _stop() {
+    if (FlashTicker._raf) {
+      cancelAnimationFrame(FlashTicker._raf);
+      FlashTicker._raf = null;
+    }
+    FlashTicker._x = 0;
+  },
+
+  async refresh() {
+    try {
+      const [cdRes, aimRes] = await Promise.all([
+        API.post('countdown-load', {}),
+        API.post('aim-load', {})
+      ]);
+      const cds  = (cdRes && cdRes.status === 'success' && cdRes.items)  ? cdRes.items  : [];
+      const aims = (aimRes && aimRes.status === 'success' && aimRes.aims) ? aimRes.aims  : [];
+      FlashTicker.render(cds, aims);
+    } catch (e) {
+      FlashTicker.render([], []);
+    }
+  },
+
+  render(cds, aims) {
+    const track = document.getElementById('ftTrack');
+    if (!track) return;
+
+    // Kill any in-flight RAF before rewriting the DOM
+    FlashTicker._stop();
+
+    const today = new Date(); today.setHours(0,0,0,0);
+    const parts = [];
+
+    // ── Countdowns ──
+    const cdSorted = (cds || []).slice().map(function(it) {
+      const d = parseDMYLocal(normalizeDeadline(it.deadline));
+      const days = d ? Math.ceil((d - today) / 86400000) : 9999;
+      return { it: it, days: days };
+    }).sort(function(a, b) { return a.days - b.days; });
+
+    cdSorted.forEach(function(row) {
+      const it = row.it;
+      const days = row.days;
+      const title = escHtml(it.title || 'Untitled');
+      const status = it.status || '';
+      if (days < 0 && status !== 'ontrack') {
+        parts.push(`<span class="ft-item warn">🔴 OVERDUE · ${title} · ${Math.abs(days)}d ago</span>`);
+      } else if (days === 0) {
+        parts.push(`<span class="ft-item warn">🔥 TODAY · ${title}</span>`);
+      } else if (days > 0 && days <= 7) {
+        parts.push(`<span class="ft-item">⏳ ${title} · ${days}d left</span>`);
+      } else if (days > 7) {
+        parts.push(`<span class="ft-item accent">⏳ ${title} · ${days}d</span>`);
+      } else if (status === 'ontrack') {
+        parts.push(`<span class="ft-item good">✓ ${title} on track</span>`);
+      }
+    });
+
+    // ── Aims ──
+    (aims || []).forEach(function(a) {
+      const start = parseDMYLocal(normalizeDeadline(a.startDate));
+      if (!start) return;
+      const dayNum = Math.max(1, Math.floor((today - start) / 86400000) + 1);
+      let tail = '';
+      if (a.deadline) {
+        const dl = parseDMYLocal(normalizeDeadline(a.deadline));
+        if (dl) {
+          const left = Math.ceil((dl - today) / 86400000);
+          if (left < 0) tail = ' · deadline passed';
+          else if (left === 0) tail = ' · deadline TODAY';
+          else tail = ' · ' + left + 'd to deadline';
+        }
+      }
+      const cls = tail.indexOf('passed') !== -1 ? 'warn'
+                : tail.indexOf('TODAY') !== -1  ? 'warn'
+                : 'good';
+      parts.push(`<span class="ft-item ${cls}">🎯 ${escHtml(a.title)} · Day ${dayNum}${tail}</span>`);
+    });
+
+    if (!parts.length) {
+      track.classList.remove('scroll');
+      track.innerHTML = '<span class="ft-item accent">📢 No countdowns or aims yet — add some to see them here</span>';
+      return;
+    }
+
+    // Two identical segments inside an inner scroller — RAF moves .ft-inner
+    // by -halfWidth then jumps back to 0. Seamless because the two halves
+    // are byte-identical.
+    track.innerHTML = '<div class="ft-inner">'
+      + '<div class="ft-seg">' + parts.join('') + '</div>'
+      + '<div class="ft-seg">' + parts.join('') + '</div>'
+      + '</div>';
+
+    // Wait one paint so .ft-seg has a real width, then start the loop
+    requestAnimationFrame(function() {
+      FlashTicker._start();
+    });
+  }
+};
+
+const TopPills = {
+  render() {
+    const el = document.getElementById('topPills');
+    if (!el) return;
+
+    const tab = state.activeTab;
+
+    if (tab === 'notes') {
+      el.innerHTML = NOTES_SLIDES.map((s, i) =>
+        `<button class="pill pill-${s.cls}${i === state.notesIndex ? ' active' : ''}" data-notes-idx="${i}">${s.emoji} ${s.name}</button>`
+      ).join('');
+      el.querySelectorAll('.pill').forEach(p => {
+        p.onclick = () => NotesTab.jumpTo(parseInt(p.dataset.notesIdx, 10));
+      });
+      return;
+    }
+
+    if (tab === 'countdown') {
+      const items = CountdownTab.items || [];
+      const today = new Date(); today.setHours(0,0,0,0);
+      const parts = items.map(it => {
+        const d = parseDMYLocal(normalizeDeadline(it.deadline));
+        const days = d ? Math.ceil((d - today) / 86400000) : 9999;
+        return { it, days };
+      }).sort((a,b) => a.days - b.days);
+
+      if (!parts.length) {
+        el.innerHTML = '<button class="pill active">⏳ No countdowns</button>';
+        return;
+      }
+      el.innerHTML = parts.map(({it, days}) => {
+        const overdue = days < 0 && it.status !== 'ontrack';
+        const label = days >= 0
+          ? `${escHtml(it.title)} · ${days}d`
+          : `${escHtml(it.title)} · ${Math.abs(days)}d ago`;
+        return `<button class="pill${overdue ? ' pill-imp' : ''}" data-cd-id="${escHtml(it.id)}">${overdue ? '⚠️ ' : '⏳ '}${label}</button>`;
+      }).join('');
+      el.querySelectorAll('.pill').forEach(p => {
+        p.onclick = () => {
+          const card = document.querySelector(`.cd-card[data-id="${p.dataset.cdId}"]`);
+          if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        };
+      });
+      return;
+    }
+
+    if (tab === 'transform' && TransformTab.activeView === 'aims') {
+      const aims = TransformTab.aims || [];
+      if (!aims.length) {
+        el.innerHTML = '<button class="pill active">🎯 No aims</button>';
+        return;
+      }
+      const today = new Date(); today.setHours(0,0,0,0);
+      el.innerHTML = aims.map(function(a, i) {
+        const start = parseDMYLocal(normalizeDeadline(a.startDate));
+        const dayNum = start ? Math.max(1, Math.floor((today - start) / 86400000) + 1) : 1;
+        return `<button class="pill${i + 1 === TransformTab.slideIndex ? ' active' : ''}" data-aim-idx="${i + 1}">${escHtml(a.title)} · D${dayNum}</button>`;
+      }).join('');
+      el.querySelectorAll('.pill').forEach(p => {
+        p.onclick = () => {
+          TransformTab.slideIndex = parseInt(p.dataset.aimIdx, 10);
+          TransformTab.renderSlide();
+          TopPills.render();
+        };
+      });
+      return;
+    }
+
+    // No pills for this tab
+    el.innerHTML = '';
+  }
+};
+
 const Tabs = {
   init() {
     document.querySelectorAll('.tab').forEach(t => {
@@ -8494,9 +8885,12 @@ const Tabs = {
     if (name === 'rem')        RemTab.render();
     if (name === 'countdown')  CountdownTab.render();
     if (name === 'transform')  TransformTab.render();
-    if (name !== 'transform')  TransformTab.streak = null;   // ← ADD
+    if (name !== 'transform')  TransformTab.streak = null;
     if (name === 'dashboard')  DashboardTab.render();
+    if (typeof TopPills !== 'undefined') TopPills.render();
     Header.render();
+    // Refresh ticker when switching tabs so data is current
+    if (typeof FlashTicker !== 'undefined') FlashTicker.refresh();
   }
 };
 
@@ -8894,6 +9288,11 @@ const App = {
     FoodTab.applyDefaults();
     // Fetch fresh
     App.fetch();
+
+    // Start flash ticker (initial + every 60s)
+    FlashTicker.refresh();
+    if (FlashTicker._timer) clearInterval(FlashTicker._timer);
+    FlashTicker._timer = setInterval(function() { FlashTicker.refresh(); }, 60000);
   },
 
   async onDateChange() {

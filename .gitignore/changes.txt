@@ -1,37 +1,42 @@
 === BEGIN CHANGES ===
-FILE: index.html
-FIND:
-          menu.innerHTML = `
-            <button class="${cur === 'done'    ? 'active' : ''}" data-set="done">✓</button>
-            <button class="${cur === 'pending' ? 'active' : ''}" data-set="pending">✕</button>
-            <button class="${cur === 'ignored' ? 'active' : ''}" data-set="ignored">⊘</button>
-          `;
-          menu.querySelectorAll('button').forEach(b => {
-            b.onclick = (ev) => {
-              ev.stopPropagation();
-              NotesTab.setStatus(s.key, id, b.dataset.set);
-              menu.classList.add('hidden');
-            };
-          });
+FILE: Code.js
+INSERT_AFTER:
+/* [43] */ function getNotesHistory(days) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('EVERYDAY_NOTES');
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  const out = [];
+  for (let i = data.length - 1; i >= 1 && out.length < days; i--) {
+    let d = data[i][0];
+    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
+    if (!d) continue;
+    out.push({
+      date: String(d),
+      positive: textToItems(data[i][1]),
+      improve:  textToItems(data[i][2]),
+      common:   textToItems(data[i][3]),
+      learned:  textToItems(data[i][4]),
+      office:   textToItems(data[i][5])
+    });
+  }
+  return out;
+}
 
-REPLACE:
-          menu.innerHTML = `
-            <button type="button" class="${cur === 'done'    ? 'active' : ''}" data-set="done">✓</button>
-            <button type="button" class="${cur === 'pending' ? 'active' : ''}" data-set="pending">✕</button>
-            <button type="button" class="${cur === 'ignored' ? 'active' : ''}" data-set="ignored">⊘</button>
-          `;
-          menu.querySelectorAll('button').forEach(b => {
-            const handler = (ev) => {
-              ev.preventDefault();
-              ev.stopPropagation();
-              NotesTab.setStatus(s.key, id, b.dataset.set);
-              menu.classList.add('hidden');
-              // Kill any focused input so the Android keypad cannot pop up
-              if (document.activeElement && document.activeElement.blur) {
-                document.activeElement.blur();
-              }
-            };
-            b.addEventListener('touchend', handler, { passive: false });
-            b.onclick = handler;
-          });
+CODE:
+function DEBUG_notesHistory() {
+  const hist = getNotesHistory(7);
+  Logger.log('Rows returned: ' + hist.length);
+  hist.forEach(function(d, i) {
+    const counts = {
+      positive: (d.positive || []).length,
+      improve:  (d.improve  || []).length,
+      common:   (d.common   || []).length,
+      learned:  (d.learned  || []).length,
+      office:   (d.office   || []).length
+    };
+    const total = counts.positive + counts.improve + counts.common + counts.learned + counts.office;
+    Logger.log('  [' + i + '] ' + d.date + ' — items: ' + total + '  ' + JSON.stringify(counts));
+  });
+}
 === END CHANGE ===
