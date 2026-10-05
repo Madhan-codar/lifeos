@@ -3670,26 +3670,6 @@ function installPastEventCleaner() {
 
   Logger.log('✅ Installed 15-min trigger for cleanAllPastEvents');
 }
-/* [106c] Install a DAILY trigger for reminderSyncAll — run ONCE from
-   the Apps Script editor. Ensures birthday/anniversary slots roll to
-   next year automatically, and any stale events get cleaned. */
-function installDailyReminderSync() {
-  const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(function (t) {
-    if (t.getHandlerFunction() === 'reminderSyncAll') {
-      ScriptApp.deleteTrigger(t);
-    }
-  });
-
-  ScriptApp.newTrigger('reminderSyncAll')
-    .timeBased()
-    .everyDays(1)
-    .atHour(2)
-    .create();
-
-  Logger.log('✅ Installed daily 02:00 trigger for reminderSyncAll');
-}
-
 
 /* [107] */ function refreshCalendarNow() {
   const t0 = Date.now();
