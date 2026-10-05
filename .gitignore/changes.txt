@@ -1,42 +1,73 @@
 === BEGIN CHANGES ===
-FILE: Code.js
-INSERT_AFTER:
-/* [43] */ function getNotesHistory(days) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('EVERYDAY_NOTES');
-  if (!sheet) return [];
-  const data = sheet.getDataRange().getValues();
-  const out = [];
-  for (let i = data.length - 1; i >= 1 && out.length < days; i--) {
-    let d = data[i][0];
-    if (d instanceof Date) d = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd-MMM-yyyy');
-    if (!d) continue;
-    out.push({
-      date: String(d),
-      positive: textToItems(data[i][1]),
-      improve:  textToItems(data[i][2]),
-      common:   textToItems(data[i][3]),
-      learned:  textToItems(data[i][4]),
-      office:   textToItems(data[i][5])
+FILE: index.html
+FIND:
+    if (Array.isArray(res.notesHistory) && res.notesHistory.length) {
+  // Merge server history with local edits (local wins for status/editedAt)
+    const local = state.notesHistory || [];
+    const byDate = {};
+    res.notesHistory.forEach(d => byDate[d.date] = d);
+    local.forEach(d => {
+      if (byDate[d.date]) {
+        // Merge each field's items by id
+        ['positive','improve','common'].forEach(k => {
+          const srv = byDate[d.date][k] || [];
+          const loc = d[k] || [];
+          const merged = srv.map(si => {
+            const li = loc.find(x => x.id === si.id);
+            if (li && li.editedAt && (!si.editedAt || li.editedAt > si.editedAt)) {
+              return Object.assign({}, si, { status: li.status, editedAt: li.editedAt });
+            }
+            return si;
+          });
+          byDate[d.date][k] = merged;
+        });
+      } else {
+        byDate[d.date] = d;
+      }
     });
+    state.notesHistory = Object.values(byDate).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+    NotesTab.saveHist();
   }
-  return out;
-}
 
-CODE:
-function DEBUG_notesHistory() {
-  const hist = getNotesHistory(7);
-  Logger.log('Rows returned: ' + hist.length);
-  hist.forEach(function(d, i) {
-    const counts = {
-      positive: (d.positive || []).length,
-      improve:  (d.improve  || []).length,
-      common:   (d.common   || []).length,
-      learned:  (d.learned  || []).length,
-      office:   (d.office   || []).length
-    };
-    const total = counts.positive + counts.improve + counts.common + counts.learned + counts.office;
-    Logger.log('  [' + i + '] ' + d.date + ' — items: ' + total + '  ' + JSON.stringify(counts));
-  });
-}
+REPLACE:
+    if (Array.isArray(res.notesHistory) && res.notesHistory.length) {
+      // Server is the source of truth for WHICH dates exist and WHAT items
+      // belong to them. Local cache only contributes per-item status edits
+      // (done/pending/ignored) on items that still exist server-side.
+      const localByDate = {};
+      (state.notesHistory || []).forEach(function(d) {
+        if (d && d.date) localByDate[d.date] = d;
+      });
+
+      const FIELDS = ['positive','improve','common','learned','office'];
+
+      state.notesHistory = res.notesHistory.map(function(serverDay) {
+        const localDay = localByDate[serverDay.date];
+        if (!localDay) return serverDay;
+
+        FIELDS.forEach(function(f) {
+          const srvItems = serverDay[f] || [];
+          const locItems = localDay[f] || [];
+          serverDay[f] = srvItems.map(function(si) {
+            const li = locItems.find(function(x) { return x.id === si.id; });
+            if (li && li.editedAt && (!si.editedAt || li.editedAt > si.editedAt)) {
+              return Object.assign({}, si, {
+                status:   li.status,
+                editedAt: li.editedAt
+              });
+            }
+            return si;
+          });
+        });
+        return serverDay;
+      });
+
+      state.notesHistory.sort(function(a, b) {
+        return String(b.date || '').localeCompare(String(a.date || ''));
+      });
+
+      NotesTab.saveHist();
+    } else if (!state.notesHistory) {
+      state.notesHistory = [];
+    }
 === END CHANGE ===
