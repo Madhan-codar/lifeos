@@ -181,6 +181,25 @@
   background: #22d3ee;
   color: #0f172a;
 }
+.work-month-nav #workMonthSync {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: #67e8f9;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.work-month-nav #workMonthSync:active {
+  background: #22d3ee;
+  color: #0f172a;
+}
 /* ═══════════════════════════════════════════════════════════════
    WORK SLIDE — card-based planned vs actual
    ═══════════════════════════════════════════════════════════════ */
@@ -5601,6 +5620,10 @@ const NotesTab = {
     const syncBtn = cont.querySelector('#workMonthSync');
     if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
+
     const bodyEl = cont.querySelector('#workMonthBody');
 
     // Always force a fresh pull when the Work slide is opened.
@@ -6598,6 +6621,16 @@ const NotesTab = {
     state.workViewMonth = null;
     NotesTab.render();
     TopPills.render();
+  },
+
+  // Force-refresh the Work slide: wipe cache and re-fetch from the sheet
+  refreshWorkSlide() {
+    state.workData = null;
+    delete state.workData;
+    state.workCardIndex = null;
+    // keep workViewYear / workViewMonth so user stays on the same month
+    NotesTab.renderWorkSlide();
+    Util.toast('↻ Synced from sheet');
   },
 
   // Force-refresh the Work slide: wipe cache and re-fetch from the sheet
