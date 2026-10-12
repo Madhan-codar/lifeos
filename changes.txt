@@ -1,0 +1,238 @@
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+    // Load data for that month
+    if (!state.workData || !state.workData.rows) {
+      bodyEl.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:12px;">Loading work plan…</div>';
+      API.post('work-plan-load', { year: yr, month: mo })
+        .then(res => {
+          if (res && res.status === 'success') {
+            state.workData = res;
+            NotesTab.renderWorkSlide();
+          } else {
+            bodyEl.innerHTML = '<div class="work-empty">Failed to load work plan</div>';
+          }
+        })
+        .catch(() => {
+          bodyEl.innerHTML = '<div class="work-empty">Failed to load work plan</div>';
+        });
+      return;
+    }
+
+REPLACE:
+    // Always force a fresh pull when the Work slide is opened.
+    // state.workData is cleared by the tab-open / boot / month-change paths.
+    if (!state.workData || !state.workData.rows) {
+      bodyEl.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:12px;">Loading work plan…</div>';
+      API.post('work-plan-load', { year: yr, month: mo })
+        .then(res => {
+          if (res && res.status === 'success') {
+            state.workData = res;
+            NotesTab.renderWorkSlide();
+          } else {
+            bodyEl.innerHTML = '<div class="work-empty">Failed to load work plan</div>';
+          }
+        })
+        .catch(() => {
+          bodyEl.innerHTML = '<div class="work-empty">Failed to load work plan</div>';
+        });
+      return;
+    }
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+  jumpTo(idx) {
+    if (idx < 0 || idx >= NOTES_SLIDES.length) return;
+    state.notesIndex = idx;
+    state.workCardIndex = null;
+    state.workData = null;
+    state.workViewYear = null;
+    state.workViewMonth = null;
+    NotesTab.render();
+    TopPills.render();
+  },
+
+REPLACE:
+  jumpTo(idx) {
+    if (idx < 0 || idx >= NOTES_SLIDES.length) return;
+    state.notesIndex = idx;
+    state.workCardIndex = null;
+    state.workData = null;
+    state.workViewYear = null;
+    state.workViewMonth = null;
+    NotesTab.render();
+    TopPills.render();
+  },
+
+  // Force-refresh the Work slide: wipe cache and re-fetch from the sheet
+  refreshWorkSlide() {
+    state.workData = null;
+    delete state.workData;
+    state.workCardIndex = null;
+    // keep workViewYear / workViewMonth so user stays on the same month
+    NotesTab.renderWorkSlide();
+    Util.toast('↻ Synced from sheet');
+  },
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+        <div class="work-month-nav">
+          <button id="workMonthPrev">◀</button>
+          <span class="work-month-label">${monthLabel}</span>
+          <button id="workMonthNext">▶</button>
+        </div>
+
+        <div id="workMonthBody"></div>
+      </div>`;
+
+REPLACE:
+        <div class="work-month-nav">
+          <button id="workMonthPrev">◀</button>
+          <span class="work-month-label">${monthLabel}</span>
+          <button id="workMonthNext">▶</button>
+          <button id="workMonthSync" title="Sync from sheet">↻</button>
+        </div>
+
+        <div id="workMonthBody"></div>
+      </div>`;
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+    cont.querySelector('#workMonthNext').onclick = () => {
+      state.workViewMonth++;
+      if (state.workViewMonth > 11) {
+        state.workViewMonth = 0;
+        state.workViewYear++;
+      }
+      state.workCardIndex = null;
+      state.workData = null;
+      delete state.workData;         // ← force clear
+      NotesTab.renderWorkSlide();
+    };
+
+REPLACE:
+    cont.querySelector('#workMonthNext').onclick = () => {
+      state.workViewMonth++;
+      if (state.workViewMonth > 11) {
+        state.workViewMonth = 0;
+        state.workViewYear++;
+      }
+      state.workCardIndex = null;
+      state.workData = null;
+      delete state.workData;         // ← force clear
+      NotesTab.renderWorkSlide();
+    };
+
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+    if (name === 'notes')      NotesTab.render();
+    if (name === 'rem')        RemTab.render();
+
+REPLACE:
+    if (name === 'notes') {
+      // Force-refresh the Work slide cache when entering the Notes tab
+      state.workData = null;
+      state.workCardIndex = null;
+      NotesTab.render();
+    }
+    if (name === 'rem')        RemTab.render();
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+    const hour = new Date().getHours();
+    if (hour >= 9 && hour < 18) {
+      state.notesIndex = 4;
+      state.workCardIndex = null;
+      state.workData = null;          // ← add
+      state.workViewYear = null;      // ← add
+      state.workViewMonth = null;     // ← add
+      Tabs.switch('notes');
+    } else {
+      state.notesIndex = 2;            // Common Notes slide
+      Tabs.switch('notes');
+    }
+
+REPLACE:
+    const hour = new Date().getHours();
+    if (hour >= 9 && hour < 18) {
+      state.notesIndex = 4;
+      state.workCardIndex = null;
+      state.workData = null;          // force refresh on next render
+      state.workViewYear = null;
+      state.workViewMonth = null;
+      Tabs.switch('notes');
+    } else {
+      state.notesIndex = 2;            // Common Notes slide
+      state.workCardIndex = null;
+      state.workData = null;          // force refresh
+      state.workViewYear = null;
+      state.workViewMonth = null;
+      Tabs.switch('notes');
+    }
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+.work-month-nav .work-month-label {
+  flex: 1;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: #67e8f9;
+  min-width: 120px;
+}
+
+REPLACE:
+.work-month-nav .work-month-label {
+  flex: 1;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: #67e8f9;
+  min-width: 120px;
+}
+.work-month-nav #workMonthSync {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: #67e8f9;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.work-month-nav #workMonthSync:active {
+  background: #22d3ee;
+  color: #0f172a;
+}
+=== END CHANGE ===
