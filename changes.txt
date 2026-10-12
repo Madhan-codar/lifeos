@@ -1,162 +1,52 @@
 === BEGIN CHANGES ===
 FILE: index.html
 FIND:
-    // ── ACTUAL section — one dropdown per row ──
-    const actualHtml = rows.length
-      ? rows.map(r => {
-          const isPrevMonth = String(r.plannedOccRaw || '').toUpperCase() === 'PREVIOUS MONTH';
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
-          // ── Default selection: use saved actual if present, else fall back to planned ──
-          const selectedValue = r.actual || r.planned || '';
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
-          // Occurrence display
-          let occDisplay;
-          if (r.actualOccRaw !== '' && r.actualOccRaw != null) {
-            occDisplay = r.actualOccRaw;
-          } else if (isPrevMonth) {
-            occDisplay = 'PREV';
-          } else if (selectedValue) {
-            // Compute occurrence as if user had already picked it
-            occDisplay = NotesTab.calcOccurrence(r.date, selectedValue);
-          } else {
-            occDisplay = '—';
-          }
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
-          return `
-            <div class="work-line" data-rowidx="${r.rowIdx}">
-              <select class="wl-select" data-rowidx="${r.rowIdx}">
-                <option value="">— Select —</option>
-                ${WORK_REPORT_OPTIONS.map(o =>
-                  `<option value="${escHtml(o)}"${selectedValue === o ? ' selected' : ''}>${escHtml(o)}</option>`
-                ).join('')}
-              </select>
-              <span class="wl-occ ${occDisplay !== '—' ? '' : 'empty'}">${escHtml(String(occDisplay))}</span>
-            </div>`;
-        }).join('')
-      : '<div style="color:var(--dim);font-size:11px;padding:4px 0;">No rows</div>';
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
-REPLACE:
-    // ── ACTUAL section — one dropdown per row ──
-    const actualHtml = rows.length
-      ? rows.map(r => {
-          const isPrevMonth = String(r.plannedOccRaw || '').toUpperCase() === 'PREVIOUS MONTH';
-          const selectedValue = r.actual || '';
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
-          // If the sheet has a value not in WORK_REPORT_OPTIONS, inject it
-          const optionsList = WORK_REPORT_OPTIONS.slice();
-          if (selectedValue && optionsList.indexOf(selectedValue) === -1) {
-            optionsList.push(selectedValue);
-          }
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
-          // Occurrence display
-          let occDisplay;
-          if (r.actualOccRaw !== '' && r.actualOccRaw != null) {
-            occDisplay = r.actualOccRaw;
-          } else if (isPrevMonth) {
-            occDisplay = 'PREV';
-          } else if (selectedValue && WORK_REPORT_OPTIONS.indexOf(selectedValue) !== -1) {
-            // Only auto-compute for known option values
-            occDisplay = NotesTab.calcOccurrence(r.date, selectedValue);
-          } else {
-            occDisplay = '—';
-          }
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
-          return `
-            <div class="work-line" data-rowidx="${r.rowIdx}">
-              <select class="wl-select" data-rowidx="${r.rowIdx}">
-                <option value="">— Select —</option>
-                ${optionsList.map(o =>
-                  `<option value="${escHtml(o)}"${selectedValue === o ? ' selected' : ''}>${escHtml(o)}</option>`
-                ).join('')}
-              </select>
-              <span class="wl-occ ${occDisplay !== '—' ? '' : 'empty'}">${escHtml(String(occDisplay))}</span>
-            </div>`;
-        }).join('')
-      : '<div style="color:var(--dim);font-size:11px;padding:4px 0;">No rows</div>';
-=== END CHANGE ===
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
-=== BEGIN CHANGES ===
-FILE: index.html
-FIND:
-    const extrasHtml = allExtras.length
-      ? allExtras.map(x => `<div class="work-extra-line">• ${escHtml(x.line)}</div>`).join('')
-      : '<div style="color:var(--dim);font-size:11px;padding:4px 0;">No additional reports</div>';
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
+
+    const bodyEl = cont.querySelector('#workMonthBody');
 
 REPLACE:
-    const extrasHtml = allExtras.length
-      ? allExtras.map(x => `<div class="work-extra-line">• ${escHtml(x.line)}</div>`).join('')
-      : '<div style="color:var(--dim);font-size:11px;padding:4px 0;">No additional reports</div>';
-=== END CHANGE ===
+    // Manual sync button — pull the latest sheet data without changing month
+    const syncBtn = cont.querySelector('#workMonthSync');
+    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
 
-
-=== BEGIN CHANGES ===
-FILE: index.html
-FIND:
-    const notesHtml = allNotes.length
-      ? allNotes.map(x => `<div class="work-note-line">📝 ${escHtml(x.line)}</div>`).join('')
-      : '<div style="color:var(--dim);font-size:11px;padding:4px 0;">No notes</div>';
-
-REPLACE:
-    const notesHtml = allNotes.length
-      ? allNotes.map(x => `<div class="work-note-line">📝 ${escHtml(x.line)}</div>`).join('')
-      : '<div style="color:var(--dim);font-size:11px;padding:4px 0;">No notes</div>';
-=== END CHANGE ===
-
-
-=== BEGIN CHANGES ===
-FILE: index.html
-FIND:
-    // ── ADDITIONAL reports — merged from all rows for this date ──
-    const allExtras = [];
-    rows.forEach(r => {
-      if (!r.additional) return;
-      r.additional.split('\n').map(x => x.trim()).filter(x => x).forEach(line => {
-        allExtras.push({ rowIdx: r.rowIdx, line: line });
-      });
-    });
-
-REPLACE:
-    // ── ADDITIONAL reports — merged from all rows for this date ──
-    // Always render whatever is present, preserving sheet order (one per line).
-    const allExtras = [];
-    rows.forEach(r => {
-      const raw = String(r.additional || '');
-      if (!raw.trim()) return;
-      raw.split('\n')
-        .map(x => x.replace(/\r/g, '').trimEnd())
-        .filter(x => x.trim() !== '')
-        .forEach(line => {
-          allExtras.push({ rowIdx: r.rowIdx, line: line });
-        });
-    });
-=== END CHANGE ===
-
-
-=== BEGIN CHANGES ===
-FILE: index.html
-FIND:
-    // ── NOTES section — merged from all rows for this date ──
-    const allNotes = [];
-    rows.forEach(r => {
-      if (!r.notes) return;
-      r.notes.split('\n').map(x => x.trim()).filter(x => x).forEach(line => {
-        allNotes.push({ rowIdx: r.rowIdx, line: line });
-      });
-    });
-
-REPLACE:
-    // ── NOTES section — merged from all rows for this date ──
-    // Always render whatever is present, preserving sheet order (one per line).
-    const allNotes = [];
-    rows.forEach(r => {
-      const raw = String(r.notes || '');
-      if (!raw.trim()) return;
-      raw.split('\n')
-        .map(x => x.replace(/\r/g, '').trimEnd())
-        .filter(x => x.trim() !== '')
-        .forEach(line => {
-          allNotes.push({ rowIdx: r.rowIdx, line: line });
-        });
-    });
+    const bodyEl = cont.querySelector('#workMonthBody');
 === END CHANGE ===
