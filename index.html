@@ -5828,9 +5828,13 @@ const NotesTab = {
     const actualHtml = rows.length
       ? rows.map(r => {
           const isPrevMonth = String(r.plannedOccRaw || '').toUpperCase() === 'PREVIOUS MONTH';
+          const selectedValue = r.actual || '';
 
-          // ── Default selection: use saved actual if present, else fall back to planned ──
-          const selectedValue = r.actual || r.planned || '';
+          // If the sheet has a value not in WORK_REPORT_OPTIONS, inject it
+          const optionsList = WORK_REPORT_OPTIONS.slice();
+          if (selectedValue && optionsList.indexOf(selectedValue) === -1) {
+            optionsList.push(selectedValue);
+          }
 
           // Occurrence display
           let occDisplay;
@@ -5838,8 +5842,8 @@ const NotesTab = {
             occDisplay = r.actualOccRaw;
           } else if (isPrevMonth) {
             occDisplay = 'PREV';
-          } else if (selectedValue) {
-            // Compute occurrence as if user had already picked it
+          } else if (selectedValue && WORK_REPORT_OPTIONS.indexOf(selectedValue) !== -1) {
+            // Only auto-compute for known option values
             occDisplay = NotesTab.calcOccurrence(r.date, selectedValue);
           } else {
             occDisplay = '—';
@@ -5849,7 +5853,7 @@ const NotesTab = {
             <div class="work-line" data-rowidx="${r.rowIdx}">
               <select class="wl-select" data-rowidx="${r.rowIdx}">
                 <option value="">— Select —</option>
-                ${WORK_REPORT_OPTIONS.map(o =>
+                ${optionsList.map(o =>
                   `<option value="${escHtml(o)}"${selectedValue === o ? ' selected' : ''}>${escHtml(o)}</option>`
                 ).join('')}
               </select>
@@ -5859,12 +5863,17 @@ const NotesTab = {
       : '<div style="color:var(--dim);font-size:11px;padding:4px 0;">No rows</div>';
 
     // ── ADDITIONAL reports — merged from all rows for this date ──
+    // Always render whatever is present, preserving sheet order (one per line).
     const allExtras = [];
     rows.forEach(r => {
-      if (!r.additional) return;
-      r.additional.split('\n').map(x => x.trim()).filter(x => x).forEach(line => {
-        allExtras.push({ rowIdx: r.rowIdx, line: line });
-      });
+      const raw = String(r.additional || '');
+      if (!raw.trim()) return;
+      raw.split('\n')
+        .map(x => x.replace(/\r/g, '').trimEnd())
+        .filter(x => x.trim() !== '')
+        .forEach(line => {
+          allExtras.push({ rowIdx: r.rowIdx, line: line });
+        });
     });
 
     const extrasHtml = allExtras.length
@@ -5875,12 +5884,17 @@ const NotesTab = {
     const extraCount = allExtras.length;
 
     // ── NOTES section — merged from all rows for this date ──
+    // Always render whatever is present, preserving sheet order (one per line).
     const allNotes = [];
     rows.forEach(r => {
-      if (!r.notes) return;
-      r.notes.split('\n').map(x => x.trim()).filter(x => x).forEach(line => {
-        allNotes.push({ rowIdx: r.rowIdx, line: line });
-      });
+      const raw = String(r.notes || '');
+      if (!raw.trim()) return;
+      raw.split('\n')
+        .map(x => x.replace(/\r/g, '').trimEnd())
+        .filter(x => x.trim() !== '')
+        .forEach(line => {
+          allNotes.push({ rowIdx: r.rowIdx, line: line });
+        });
     });
 
     const notesHtml = allNotes.length
