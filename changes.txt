@@ -1,52 +1,75 @@
 === BEGIN CHANGES ===
 FILE: index.html
 FIND:
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
-
-    const bodyEl = cont.querySelector('#workMonthBody');
+    const extrasOpen = !state.workExtrasOpen[data.date];
+    const extraCount = allExtras.length;
 
 REPLACE:
-    // Manual sync button — pull the latest sheet data without changing month
-    const syncBtn = cont.querySelector('#workMonthSync');
-    if (syncBtn) syncBtn.onclick = () => NotesTab.refreshWorkSlide();
+    // Default = OPEN. Only collapse if user explicitly clicked to close.
+    const extrasOpen = state.workExtrasOpen[data.date] !== false;
+    const notesOpen  = extrasOpen;
+    const extraCount = allExtras.length;
+=== END CHANGE ===
 
-    const bodyEl = cont.querySelector('#workMonthBody');
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+        <div class="work-extras ${extrasOpen ? 'collapsed' : ''}" data-date="${data.date}">
+          <div class="work-extras-hd">
+            <span class="cr">▼</span>
+            <span>➕ Additional Reports (${extraCount})</span>
+          </div>
+
+REPLACE:
+        <div class="work-extras ${extrasOpen ? '' : 'collapsed'}" data-date="${data.date}">
+          <div class="work-extras-hd">
+            <span class="cr">▼</span>
+            <span>➕ Additional Reports (${extraCount})</span>
+          </div>
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+        <div class="work-extras work-notes-sec ${extrasOpen ? 'collapsed' : ''}" data-date="${data.date}">
+          <div class="work-extras-hd">
+            <span class="cr">▼</span>
+            <span>📝 Notes (${allNotes.length})</span>
+          </div>
+
+REPLACE:
+        <div class="work-extras work-notes-sec ${notesOpen ? '' : 'collapsed'}" data-date="${data.date}">
+          <div class="work-extras-hd">
+            <span class="cr">▼</span>
+            <span>📝 Notes (${allNotes.length})</span>
+          </div>
+=== END CHANGE ===
+
+
+=== BEGIN CHANGES ===
+FILE: index.html
+FIND:
+    // Collapsible toggle
+    cont.querySelectorAll('.work-extras-hd').forEach(hd => {
+      hd.onclick = () => {
+        const wrap = hd.closest('.work-extras');
+        const date = wrap.dataset.date;
+        state.workExtrasOpen[date] = !state.workExtrasOpen[date];
+        wrap.classList.toggle('collapsed', !state.workExtrasOpen[date]);
+      };
+    });
+
+REPLACE:
+    // Collapsible toggle — remembers per-date collapsed state
+    cont.querySelectorAll('.work-extras-hd').forEach(hd => {
+      hd.onclick = () => {
+        const wrap = hd.closest('.work-extras');
+        const date = wrap.dataset.date;
+        const nowCollapsed = !wrap.classList.contains('collapsed');
+        wrap.classList.toggle('collapsed', nowCollapsed);
+        state.workExtrasOpen[date] = !nowCollapsed;   // true = open, false = closed
+      };
+    });
 === END CHANGE ===

@@ -5844,7 +5844,9 @@ const NotesTab = {
       ? allExtras.map(x => `<div class="work-extra-line">• ${escHtml(x.line)}</div>`).join('')
       : '<div style="color:var(--dim);font-size:11px;padding:4px 0;">No additional reports</div>';
 
-    const extrasOpen = !state.workExtrasOpen[data.date];
+    // Default = OPEN. Only collapse if user explicitly clicked to close.
+    const extrasOpen = state.workExtrasOpen[data.date] !== false;
+    const notesOpen  = extrasOpen;
     const extraCount = allExtras.length;
 
     // ── NOTES section — merged from all rows for this date ──
@@ -5880,7 +5882,7 @@ const NotesTab = {
           ${actualHtml}
         </div>
 
-        <div class="work-extras ${extrasOpen ? 'collapsed' : ''}" data-date="${data.date}">
+        <div class="work-extras ${extrasOpen ? '' : 'collapsed'}" data-date="${data.date}">
           <div class="work-extras-hd">
             <span class="cr">▼</span>
             <span>➕ Additional Reports (${extraCount})</span>
@@ -5891,7 +5893,7 @@ const NotesTab = {
           </div>
         </div>
 
-        <div class="work-extras work-notes-sec ${extrasOpen ? 'collapsed' : ''}" data-date="${data.date}">
+        <div class="work-extras work-notes-sec ${notesOpen ? '' : 'collapsed'}" data-date="${data.date}">
           <div class="work-extras-hd">
             <span class="cr">▼</span>
             <span>📝 Notes (${allNotes.length})</span>
@@ -5941,13 +5943,14 @@ const NotesTab = {
   },
 
   wireWorkCard(cont, currentDate) {
-    // Collapsible toggle
+    // Collapsible toggle — remembers per-date collapsed state
     cont.querySelectorAll('.work-extras-hd').forEach(hd => {
       hd.onclick = () => {
         const wrap = hd.closest('.work-extras');
         const date = wrap.dataset.date;
-        state.workExtrasOpen[date] = !state.workExtrasOpen[date];
-        wrap.classList.toggle('collapsed', !state.workExtrasOpen[date]);
+        const nowCollapsed = !wrap.classList.contains('collapsed');
+        wrap.classList.toggle('collapsed', nowCollapsed);
+        state.workExtrasOpen[date] = !nowCollapsed;   // true = open, false = closed
       };
     });
 
