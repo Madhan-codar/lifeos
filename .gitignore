@@ -1,0 +1,34 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Backups (created by apply_changes.py)
+.backups/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# Google Apps Script / clasp
+.clasprc.json
+node_modules/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS junk
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Logs / temp
+*.log
+*.tmp

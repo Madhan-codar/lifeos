@@ -261,10 +261,54 @@ def process_file(filename, ops, dry_run=False):
 
 def git_push(message="Auto: apply changes from changes.txt"):
     try:
+        # Load .env from the script's own directory
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+
+        username = os.getenv("GITHUB_USERNAME")
+        token    = os.getenv("GITHUB_TOKEN")
+
+        if not username or not token:
+            print("⚠️  GITHUB_USERNAME / GITHUB_TOKEN missing from .env — skipping push")
+            return
+
         subprocess.run(["git", "add", "."], check=True)
         subprocess.run(["git", "commit", "-m", message], check=True)
-        subprocess.run(["git", "push"], check=True)
-        print("🚀 Pushed to GitHub")
+
+        # Get the current branch name
+        branch = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True
+        ).strip()
+
+        # Get the origin remote URL and inject credentials
+        remote = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"],
+            text=True
+        ).strip()
+
+        # Strip any existing credentials from the URL
+        clean_remote = re.sub(r'https://[^@]*@', 'https://', remote)
+
+        if clean_remote.startswith("https://"):
+            auth_remote = clean_remote.replace(
+                "https://",
+                f"https://{username}:{token}@",
+                1
+            )
+        else:
+            auth_remote = clean_remote  # SSH or other — no token needed
+
+        subprocess.run(["git", "push", auth_remote, branch], check=True)
+        print(f"🚀 Pushed to GitHub ({branch})")
+
     except subprocess.CalledProcessError as e:
         print(f"⚠️  Git push failed: {e}")
     except FileNotFoundError:
